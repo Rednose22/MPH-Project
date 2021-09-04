@@ -1,50 +1,53 @@
 ---
-title: "Plaque psoriasis ML-NMR"
+  title: "Plaque psoriasis ML-NMR"
 output:
   pdf_document:
-    latex_engine: lualatex
+  latex_engine: lualatex
 fontsize: 12pt
 mainfont: Arial
 linestretch: 1.5
 ---
-
-```{r, include=FALSE}
+  
+  ```{r, include=FALSE, eval=FALSE, echo=FALSE}
 # Secukinumab (司库奇尤单抗, Novartis, IL blocker)
 # Etanercept (依那西普, Pfizer, TNFa blocker)
 # Ustekinumab (乌司奴单抗, J&J, IL blocker)                       
 # Ixekizumab (依克珠单抗, EliLilly, IL blocker)
 
-
-
-
-
-```
-
+### 5 AGD
 1. In the "FIXTURE" trial, the Secukinumab is more effective than Etanercept. (300 mg Secukinumab vs 150 mg Secukinumab vs Placebo vs 50mg etanercept)
 
 2. In the "ERASURE" trial, 300 mg Secukinumab vs 150 mg Secukinumab vs Placebo. 
 
+3. In the "CLEAR" trial, 300 mg Secukinumab vs 150 mg Secukinumab vs Placebo.
 
+4. In the "FEATURE" trial, 300 mg Secukinumab vs 150 mg Secukinumab vs Placebo.
 
-### IPD
-1. In the "IXORA" trial, Ixekizumab vs Ustekinumab.
+5. In the "JUNCTURE" trial, 300 mg Secukinumab vs 150 mg Secukinumab vs Placebo.
 
+### 4 IPD
+1. In the "IXORA" trial, Ixekizumab q2w vs Ustekinumab.
 
-2. In the "UNCOVER-1" trial, 80 mg ixekizumab p2w vs 160 mg ixekizumab p2w vs 80 mg ixekizumab p4w.
+2. In the "UNCOVER-1" trial, 80 mg ixekizumab q2w vs 160 mg ixekizumab q2w vs 80 mg ixekizumab p4w.
 
-3. In the "UNCOVER-2" trial, 80 mg ixekizumab p2w vs 160 mg ixekizumab p2w vs 80 mg ixekizumab p4w vs 50 mg etanercept
+3. In the "UNCOVER-2" trial, 80 mg ixekizumab q2w vs 160 mg ixekizumab q2w vs 80 mg ixekizumab p4w vs 50 mg etanercept
 
-4. In the "UNCOVER-3" trial, 80 mg ixekizumab p2w vs 160 mg ixekizumab p2w vs 80 mg ixekizumab p4w vs 50 mg etanercept
+4. In the "UNCOVER-3" trial, 80 mg ixekizumab q2w vs 160 mg ixekizumab q2w vs 80 mg ixekizumab p4w vs 50 mg etanercept
 
 5. From the "UNCOVER-2" and "UNCOVER-3", ixekizumab is more effective than Etanercept.
 
+```
 
 
-```{r, warning=FALSE, echo=FALSE}
+```{r, warning=FALSE, echo=FALSE, message=FALSE}
+
 library(multinma)
-library(dplyr)      # dplyr and tidyr for data manipulation
-library(tidyr)
-library(ggplot2)    # ggplot2 for plotting covariate distributions
+library(tidyverse)
+library(lazyeval)
+library(data.table)
+library(purrr)
+library(kableExtra)
+library(rlist) ## save the list as rdata
 
 options(mc.cores = parallel::detectCores())
 
@@ -57,109 +60,92 @@ options(mc.cores = nc)
 
 ## Acquire IPD and AGD
 ```{r}
+sleep_a_minute <- function() { Sys.sleep(10)}
+
+start_time <- Sys.time()
+sleep_a_minute()
+
 full_ipd <- plaque_psoriasis_ipd
 
 full_agd <- plaque_psoriasis_agd
 
-pso_ipd <- filter(plaque_psoriasis_ipd,
-                  studyc %in% c("UNCOVER-2"))
-
-pso_agd <- filter(plaque_psoriasis_agd,
-                  studyc == "FIXTURE")
-
 ```
 
+# Fixed effect model with single subgroup effect
+## Age
 ## check the age distribution of IPD data
 ```{r, warning=FALSE, echo=FALSE}
 hist(full_ipd$age)
 summary(full_ipd$age)
 ```
 
-The distribution is pretty normal. 
+The distribution is pretty normal. So we take the median as the cutting point of subgroup.
 
-```{r}
-pso_ipd <- pso_ipd %>% 
+```{r, warning=FALSE}
+
+## Data transformation in IPD
+sub_ipd <- full_ipd %>% 
   mutate(# Variable transformations
-         bsa = bsa / 100,
-         prevsys = as.numeric(prevsys),
-         psa = as.numeric(psa),
-         weight = weight / 10,
-         durnpso = durnpso / 10,
-         # Treatment classes
-         trtclass = case_when(trtn == 1 ~ "Placebo",
-                              trtn %in% c(2, 3, 5, 6) ~ "IL blocker",
-                              trtn == 4 ~ "TNFa blocker"),
-         # Check complete cases for covariates of interest
-         complete = complete.cases(durnpso, prevsys, bsa, weight, psa),
-         sub_g = ifelse(age>=47, "gt or eq 47", "lt 47"))
+    bsa = bsa / 100,
+    prevsys = as.numeric(prevsys),
+    psa = as.numeric(psa),
+    weight = weight / 10,
+    durnpso = durnpso / 10,
+    # Treatment classes
+    trtclass = case_when(trtn == 1 ~ "Placebo",
+                         trtn %in% c(2, 3, 5, 6, 7) ~ "IL blocker",
+                         trtn == 4 ~ "TNFa blocker"),
+    # Check complete cases for covariates of interest
+    complete = complete.cases(durnpso, prevsys, bsa, weight, psa),
+    sub_age = ifelse(age>=47, "gt or eq 47", "lt 47"),
+    sub_sex = ifelse(male == "TRUE", 1, 0))
 
 
+## subgroup result generated from IPD
 ## five covariate durnpso, prevsys, bsa, weight, psa
-## calculate the mean age in younger and older group
-sub <- pso_ipd %>% 
-  mutate(sub_g = ifelse(age>=47, "gt or eq 47", "lt 47")) %>%
-  group_by(sub_g) %>% 
-  summarise(age_mean = mean(age),
-            age_sd = sd(age))
+## include studyc, trt, trtclass, trtn, trtc_long into by vars
 
-pso_sbg <- pso_ipd %>% 
-  group_by(studyc, sub_g) %>%
-  # group_by(studyc, sub_g, trtc, trtclass) %>% 
-  summarise(age_mean = mean(age),
-            age_sd = sd(age),
-            bmi_mean = mean(bmi, na.rm = TRUE),
-            bmi_sd = sd(bmi, na.rm = TRUE),
-            weight_mean = mean(bmi, na.rm = TRUE),
-            weight_sd = sd(bmi, na.rm = TRUE),
-            durnpso_mean = mean(durnpso),
-            durnpso_sd = sd(durnpso),
-            pasi75_n = n(),
-            pasi75_r = sum(pasi75),
-            pasi90_n = n(),
-            pasi90_r = sum(pasi90),
-            pasi100_n = n(),
-            pasi100_r = sum(pasi100), 
-            psa = mean(psa), 
-            prevsys = mean(prevsys), 
-            bsa_mean = mean(bsa), 
-            bsa_sd = sd(bsa)) %>%
-  mutate(
-    # trtc = paste0(sub_g," ",trtclass, " ", trtc),
-         trtc = sub_g,
-         studyc = paste(studyc, " Sub"))%>%
-    ungroup() %>%
-    select(-sub_g)
+sub_eff_func <- function(group_vars, name_) {
+  
+  sub_ipd %>% 
+    group_by(!!!group_vars) %>%
+    summarise(age_mean = mean(age),
+              age_sd = sd(age),
+              bmi_mean = mean(bmi, na.rm = TRUE),
+              bmi_sd = sd(bmi, na.rm = TRUE),
+              weight_mean = mean(bmi, na.rm = TRUE),
+              weight_sd = sd(bmi, na.rm = TRUE),
+              durnpso_mean = mean(durnpso),
+              durnpso_sd = sd(durnpso),
+              pasi75_n = n(),
+              pasi75_r = sum(pasi75),
+              pasi90_n = n(),
+              pasi90_r = sum(pasi90),
+              pasi100_n = n(),
+              pasi100_r = sum(pasi100), 
+              psa = mean(psa), 
+              prevsys = mean(prevsys), 
+              bsa_mean = mean(bsa), 
+              bsa_sd = sd(bsa)) %>%
+    mutate(studyc = paste(studyc, name_)) 
+  
+}
 
-## include studyc, trt, trtclass into by vars            
-pso_sbg2 <- pso_ipd %>% 
-  group_by(studyc, sub_g, trtclass) %>%
-  summarise(age_mean = mean(age),
-            age_sd = sd(age),
-            bmi_mean = mean(bmi, na.rm = TRUE),
-            bmi_sd = sd(bmi, na.rm = TRUE),
-            weight_mean = mean(bmi, na.rm = TRUE),
-            weight_sd = sd(bmi, na.rm = TRUE),
-            durnpso_mean = mean(durnpso),
-            durnpso_sd = sd(durnpso),
-            pasi75_n = n(),
-            pasi75_r = sum(pasi75),
-            pasi90_n = n(),
-            pasi90_r = sum(pasi90),
-            pasi100_n = n(),
-            pasi100_r = sum(pasi100), 
-            psa = mean(psa), 
-            prevsys = mean(prevsys), 
-            bsa_mean = mean(bsa), 
-            bsa_sd = sd(bsa)) %>%
-  mutate(
-    trtc = paste0(sub_g," ",trtclass),
-         studyc = paste(studyc, " Sub"))%>%
-    ungroup() %>%
-    select(-sub_g)
+## aggregrate data age-specific subgroup
+agd_sub_age <- sub_eff_func(quos(studyc, trtc, trtclass, trtn, trtc_long, sub_age), "SUB")
+
+## aggregrate data sex-specific subgroup
+agd_sub_sex <- sub_eff_func(quos(studyc, trtc, trtclass, trtn, trtc_long, sub_sex), "SUB")
+
+## aggregrate data factorial combination of age and sex subgroup
+agd_sub_agesex <- sub_eff_func(quos(studyc, trtc, trtclass, trtn, trtc_long, sub_age, sub_sex), "SUB")
+
+## convert IPD to AgD
+ipd_agd <- sub_eff_func(quos(studyc, trtc, trtclass, trtn, trtc_long), "IPD")
 
 
-
-pso_agd <- pso_agd %>% 
+## original AgD mutation
+sub_agd <- full_agd %>% 
   mutate(
     # Variable transformations
     bsa_mean = bsa_mean / 100,
@@ -172,100 +158,41 @@ pso_agd <- pso_agd %>%
     durnpso_sd = durnpso_sd / 10,
     # Treatment classes
     trtclass = case_when(trtn == 1 ~ "Placebo",
-                              trtn %in% c(2, 3, 5, 6) ~ "IL blocker",
-                              trtn == 4 ~ "TNFa blocker")
+                         trtn %in% c(2, 3, 5, 6, 7) ~ "IL blocker",
+                         trtn == 4 ~ "TNFa blocker")
   )
 
-# combine the AGD and subgroup
-pso_agd2 <- bind_rows(pso_agd,
-                      pso_sbg)
 
-pso_agd3 <- bind_rows(pso_agd,
-                      pso_sbg2)
+
+## combine AGD with study level/treatment level subgroup
+sub_agd1 <- bind_rows(sub_agd,
+                      agd_sub_age, 
+                      ipd_agd)
+
+sub_agd2 <- bind_rows(sub_agd,
+                      agd_sub_sex, 
+                      ipd_agd)
+
+sub_agd3 <- bind_rows(sub_agd,
+                      agd_sub_agesex, 
+                      ipd_agd)
+
 ```
 
 A small number of individuals have missing covariates:
-```{r}
-sum(!pso_ipd$complete)
-mean(!pso_ipd$complete)
+  ```{r}
+sum(!sub_ipd$complete)
+mean(!sub_ipd$complete)
 ```
 
 Since the proportion of missing data is so small, we will simply exclude these individuals from the analysis.
 ```{r}
-pso_ipd <- filter(pso_ipd, complete)
+sub_ipd <- filter(sub_ipd, complete)
 ```
 
-## Creating the network
-
-```{r}
-
-pso_net_sub <- combine_network(
-  set_ipd(pso_ipd, 
-          study = studyc, 
-          trt = trtc, 
-          r = pasi75),
-          # ,
-          # trt_class = trtclass),
-  
-  set_agd_arm(pso_agd2, 
-              study = studyc, 
-              trt = trtc, 
-              r = pasi75_r, 
-              n = pasi75_n)
-          #     ,
-          # trt_class = trtclass)
-)
-
-pso_net_sub1 <- combine_network(
-  set_ipd(pso_ipd, 
-          study = studyc, 
-          trt = trtc, 
-          r = pasi75,
-          trt_class = trtclass),
-  set_agd_arm(pso_agd3, 
-              study = studyc, 
-              trt = trtc, 
-              r = pasi75_r, 
-              n = pasi75_n,
-              trt_class = trtclass)
-)
-
-pso_net <- combine_network(
-  set_ipd(pso_ipd, 
-          study = studyc, 
-          trt = trtc, 
-          r = pasi75,
-          trt_class = trtclass),
-  
-  set_agd_arm(pso_agd, 
-              study = studyc, 
-              trt = trtc, 
-              r = pasi75_r, 
-              n = pasi75_n,
-          trt_class = trtclass)
-)
-
-pso_net
-
-```
-
-We can produce a network plot with the `plot()` method:
-```{r pso_network_plot, fig.width=8, fig.height=6, out.width="100%"}
-plot(pso_net_sub, weight_nodes = TRUE, weight_edges = TRUE, show_trt_class = F) + 
-  ggplot2::theme(legend.position = "bottom", legend.box = "vertical")
-
-plot(pso_net_sub1, weight_nodes = TRUE, weight_edges = TRUE, show_trt_class = F) + 
-  ggplot2::theme(legend.position = "bottom", legend.box = "vertical")
-
-plot(pso_net, weight_nodes = TRUE, weight_edges = TRUE, show_trt_class = T) + 
-  ggplot2::theme(legend.position = "bottom", legend.box = "vertical")
-```
-
-## Numerical integration for ML-NMR
-
-```{r pso_covariate_plot}
+```{r distribution_of_covariates, fig.width=8, fig.height=8, out.width="100%"}
 # Get mean and sd of covariates in each study
-ipd_summary <- pso_ipd %>% 
+ipd_summary <- sub_ipd %>% 
   group_by(studyc) %>% 
   summarise_at(vars(weight, durnpso, bsa), list(mean = mean, sd = sd, min = min, max = max)) %>% 
   pivot_longer(weight_mean:bsa_max, names_sep = "_", names_to = c("covariate", ".value")) %>% 
@@ -283,473 +210,420 @@ ipd_summary <- pso_ipd %>%
   mutate(dens = eval(call(first(dist), x = value, mean = first(mean), sd = first(sd))))
 
 # Plot histograms and assumed densities
-pso_ipd %>% 
+sub_ipd %>% 
   pivot_longer(c(weight, durnpso, bsa), names_to = "covariate", values_to = "value") %>% 
-ggplot(aes(x = value)) +
+  ggplot(aes(x = value)) +
   geom_histogram(aes(y = stat(density)), 
-                 binwidth = function(x) diff(range(x)) / nclass.Sturges(x),
+                 binwidth = function(x) diff(range(x)) /nclass.Sturges(x),
                  boundary = 0,
                  fill = "grey50") +
   geom_line(aes(y = dens), data = ipd_summary,
             colour = "darkred", size = 0.5) +
   facet_wrap(~studyc + covariate, scales = "free", ncol = 3) +
   theme_multinma()
-```
-
-
-```{r}
-pso_net_org <- add_integration(pso_net,
-  durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
-  prevsys = distr(qbern, prob = prevsys),
-  bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
-  weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
-  psa = distr(qbern, prob = psa),
-  n_int = 1000
-)
-
-pso_net_sub <- add_integration(pso_net_sub,
-  durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
-  prevsys = distr(qbern, prob = prevsys),
-  bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
-  weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
-  psa = distr(qbern, prob = psa),
-  n_int = 1000
-)
-
-pso_net_sub1 <- add_integration(pso_net_sub1,
-  durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
-  prevsys = distr(qbern, prob = prevsys),
-  bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
-  weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
-  psa = distr(qbern, prob = psa),
-  n_int = 1000
-)
-
-pso_net1 <- add_integration(pso_net,
-  durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
-  prevsys = distr(qbern, prob = prevsys),
-  bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
-  weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
-  psa = distr(qbern, prob = psa),
-  age = distr(qnorm, mean = 55.98142, sd = 7.645212),
-  n_int = 1000
-)
-
-pso_net <- add_integration(pso_net,
-  durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
-  prevsys = distr(qbern, prob = prevsys),
-  bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
-  weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
-  psa = distr(qbern, prob = psa),
-  age = distr(qnorm, mean = 34.99825, sd = 7.104982),
-  n_int = 1000
-)
-
-pso_net1 <- add_integration(pso_net,
-  durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
-  prevsys = distr(qbern, prob = prevsys),
-  bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
-  weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
-  psa = distr(qbern, prob = psa),
-  age = distr(qnorm, mean = 55.98142, sd = 7.645212),
-  n_int = 1000
-)
-```
-
-# ML-NMR models
-We fit both fixed effect (FE) and random effects (RE) ML-NMR models.
-
-## Fixed effect ML-NMR
-
-```{r}
-summary(normal(scale = 10))
-```
-
-
-```{r}
-
-set.seed(111111)
-pso_fit_FE_sub <- nma(pso_net_sub, 
-                  trt_effects = "fixed",
-                  link = "probit", 
-                  likelihood = "bernoulli2",
-                  regression = ~(durnpso + prevsys + bsa + weight + psa)*.trt,
-                  class_interactions = "common",
-                  prior_intercept = normal(scale = 10),
-                  prior_trt = normal(scale = 10),
-                  prior_reg = normal(scale = 10),
-                  init_r = 0.1,
-                  QR = TRUE)
-
-## failed to get the chain
-pso_fit_FE_sub1 <- nma(pso_net_sub1, 
-                  trt_effects = "fixed",
-                  link = "probit", 
-                  likelihood = "bernoulli2",
-                  regression = ~(durnpso + prevsys + bsa + weight + psa)*.trt,
-                  class_interactions = "common",
-                  prior_intercept = normal(scale = 10),
-                  prior_trt = normal(scale = 10),
-                  prior_reg = normal(scale = 10),
-                  init_r = 0.1,
-                  QR = TRUE)
-
-
-pso_fit_FE <- nma(pso_net, 
-                  trt_effects = "fixed",
-                  link = "probit", 
-                  likelihood = "bernoulli2",
-                  regression = ~(durnpso + prevsys + bsa + weight + psa + age)*.trt,
-                  class_interactions = "common",
-                  prior_intercept = normal(scale = 10),
-                  prior_trt = normal(scale = 10),
-                  prior_reg = normal(scale = 10),
-                  init_r = 0.1,
-                  QR = TRUE)
-
-pso_fit_FE1 <- nma(pso_net1, 
-                  trt_effects = "fixed",
-                  link = "probit", 
-                  likelihood = "bernoulli2",
-                  regression = ~(durnpso + prevsys + bsa + weight + psa + age)*.trt,
-                  class_interactions = "common",
-                  prior_intercept = normal(scale = 10),
-                  prior_trt = normal(scale = 10),
-                  prior_reg = normal(scale = 10),
-                  init_r = 0.1,
-                  QR = TRUE)
-
-pso_fit_FE_org <- nma(pso_net_org, 
-                  trt_effects = "fixed",
-                  link = "probit", 
-                  likelihood = "bernoulli2",
-                  regression = ~(durnpso + prevsys + bsa + weight + psa)*.trt,
-                  class_interactions = "common",
-                  prior_intercept = normal(scale = 10),
-                  prior_trt = normal(scale = 10),
-                  prior_reg = normal(scale = 10),
-                  init_r = 0.1,
-                  QR = TRUE)
-```
-
-Basic parameter summaries are given by the `print()` method:
-```{r}
-print(pso_fit_FE_sub1)
-
-print(pso_fit_FE)
-
-print(pso_fit_FE1)
 
 ```
 
-By default, summaries of the study-specific intercepts $\mu_j$ are hidden, but could be examined by changing the `pars` argument:
-```{r, eval=FALSE}
-# Not run
-print(pso_fit_FE, pars = c("d", "beta", "mu"))
-```
+## ML-NMR in different scenario
+### Original scenario
+```{r, fig.width=8, fig.height=8, out.width="100%"}
 
-The prior and posterior distributions can be compared visually using the `plot_prior_posterior()` function:
-```{r pso_FE_pp_plot, fig.width=8, fig.height=6, out.width="100%"}
-plot_prior_posterior(pso_fit_FE, prior = c("intercept", "trt", "reg"))
-```
+## Network of original scenario
+## define a function to run the multiple ML-NMRs
+## return a list which contains the coefficient of model, network plot, network, and model fit in a list
+## agd.dt: the AgD
+## col_name: default value is studyc, which helps to select corresponding IPD and AgD
+## value1: filter criteria in IPD
+## value2: filter cretieria in AgD
 
-Plots of estimated numerical integration error are produced using the `plot_integration_error()` function:
-```{r pso_FE_cumint}
-plot_integration_error(pso_fit_FE)
-```
-
-## Random effects ML-NMR
-We now fit a RE model.
-Again, we specify weakly-informative $N(0, 10^2)$ priors on each parameter, and now specify a $\textrm{half-N}(0, 2.5^2)$ prior for the heterogeneity standard deviation $\tau$.
-The range of parameter values implied by these prior distributions can be checked using the `summary()` method:
-```{r}
-summary(normal(scale = 10))
-summary(half_normal(scale = 2.5))
-```
-
-Fitting the model uses the same call to `nma()` as before, except now with `trt_effects = "random"`.
-```{r, eval=!params$run_tests}
-pso_fit_RE <- nma(pso_net, 
-                  trt_effects = "random",
-                  link = "probit", 
-                  likelihood = "bernoulli2",
-                  regression = ~(durnpso + prevsys + bsa + weight + psa)*.trt,
-                  class_interactions = "common",
-                  prior_intercept = normal(scale = 10),
-                  prior_trt = normal(scale = 10),
-                  prior_reg = normal(scale = 10),
-                  prior_het = half_normal(scale = 2.5),
-                  init_r = 0.1,
-                  QR = TRUE)
-
-
-?nma
-
-```
-
-Basic parameter summaries are given by the `print()` method:
-```{r, eval=!params$run_tests}
-print(pso_fit_RE)
-```
-
-By default, summaries of the study-specific intercepts $\mu_j$ and study-specific relative effects $\delta_{jk}$ are hidden, but could be examined by changing the `pars` argument:
-```{r, eval=FALSE}
-# Not run
-print(pso_fit_RE, pars = c("d", "beta", "tau", "mu", "delta"))
-```
-
-There are a number of divergent transitions, which we can investigate using the `pairs()` method:
-```{r pso_RE_pairs, eval=!params$run_tests}
-pairs(pso_fit_RE, pars = c("delta[UNCOVER-2: ETN]", "d[ETN]", "tau", "lp__"))
-```
-
-The divergent transition errors (red crosses) seem to be concentrated in the upper tail of the heterogeneity standard deviation parameter.
-This suggests that the information to identify the heterogeneity parameter is weak - we have only four studies in the network - and that a more informative prior distribution might aid estimation.
-
-The prior and posterior distributions can be compared visually using the `plot_prior_posterior()` function:
-```{r pso_RE_pp_plot, eval=!params$run_tests, fig.width=8, fig.height=6, out.width="100%"}
-plot_prior_posterior(pso_fit_RE, prior = c("intercept", "trt", "reg", "het"))
-```
-
-Plots of estimated numerical integration error are produced using the `plot_integration_error()` function:
-```{r pso_RE_cumint, eval=!params$run_tests}
-plot_integration_error(pso_fit_RE)
-```
-
-# Model comparison
-The model fit under the FE and RE models can be checked using the `dic()` function.
-```{r, eval=!params$run_tests}
-(pso_dic_FE <- dic(pso_fit_FE))
-(pso_dic_RE <- dic(pso_fit_RE))
-```
-```{r, eval=params$run_tests, echo=FALSE}
-(pso_dic_FE <- dic(pso_fit_FE))
-```
-
-The DIC is similar between the FE and RE models, suggesting that there is little evidence for any residual heterogeneity.
-
-# Further results
-Parameter estimates can be plotted using the `plot()` method, for example to examine the estimated regression coefficients:
-```{r}
-plot(pso_fit_FE,
-     pars = "beta",
-     stat = "halfeye",
-     ref_line = 0)
-```
-
-Plots of posterior summaries are based on the `ggdist` package, which allows a great degree of flexibility, and can be further customised using `ggplot2` commands. 
-In the above command we specify a `"halfeye"` plot, which shows the posterior density along with posterior medians (points) and 95% Credible Intervals (thin line) with 66% inner bands (thicker line) by default.
-For more details on the plotting options see `?plot.nma_summary`.
-
-We can produce population-adjusted relative effects for each study population in the network using the `relative_effects()` function.
-```{r pso_releff_FE}
-(pso_releff_FE <- relative_effects(pso_fit_FE))
-plot(pso_releff_FE, ref_line = 0)
-```
-
-Predicted probabilities of achieving PASI 75 in each study population on each treatment are produced using the `predict()` method.
-The argument `type = "reponse"` specifies that we want predicted probabilities, rather than probit probabilities.
-```{r pso_pred_FE}
-(pso_pred_FE <- predict(pso_fit_FE, type = "response"))
-plot(pso_pred_FE, ref_line = c(0, 1))
-```
-
-We can produce population-adjusted ranks, rank probabilities, and cumulative rank probabilities in each study population using the `posterior_ranks()` and `posterior_rank_probs()` functions (although here the ranks are unchanged between populations, as the distributions of effect modifiers are similar).
-We specify `lower_better = FALSE`, since a higher outcome is better (higher chance of achieving PASI 75).
-```{r pso_ranks_FE}
-(pso_ranks_FE <- posterior_ranks(pso_fit_FE, lower_better = FALSE))
-plot(pso_ranks_FE)
-```
-
-```{r pso_rankprobs_FE}
-(pso_rankprobs_FE <- posterior_rank_probs(pso_fit_FE, lower_better = FALSE))
-plot(pso_rankprobs_FE)
-```
-
-```{r pso_cumrankprobs_FE}
-(pso_cumrankprobs_FE <- posterior_rank_probs(pso_fit_FE, lower_better = FALSE, cumulative = TRUE))
-plot(pso_cumrankprobs_FE)
-```
-
-All of the above estimates (relative effects, predictions, rankings) can also be produced for a specific target population or populations by providing a suitable `newdata` argument to for function (and a `baseline` distribution for `predict()`).
-
-To produce population-adjusted relative effects (and corresponding rankings) for a chosen target population, we require only the mean covariate values in that population.
-For example, `newdata` could provide the following mean covariate values:
-```{r}
-new_agd_means <- tibble(
-  bsa = 0.6,
-  prevsys = 0.1,
-  psa = 0.2,
-  weight = 10,
-  durnpso = 3)
-```
-
-Population-adjusted relative effects in this target population are then calculated using the `relative_effects()` function, and can be plotted with the corresponding `plot()` method:
-```{r pso_releff_FE_new}
-(pso_releff_FE_new <- relative_effects(pso_fit_FE, newdata = new_agd_means))
-plot(pso_releff_FE_new, ref_line = 0)
-```
-
-For absolute predictions, we require information about the full covariate distribution in the target population, not just the mean values.
-If IPD are available for the target population, `newdata` is simply a data frame of the IPD.
-If AgD are available for the target population, `newdata` must be a data frame with added integration points created using the `add_integration()` function.
- 
-For example, suppose the aggregate target population introduced above had the following covariate means and standard deviations (for continuous covariates) or proportions (for discrete covariates):
-```{r}
-new_agd_int <- tibble(
-  bsa_mean = 0.6,
-  bsa_sd = 0.3,
-  prevsys = 0.1,
-  psa = 0.2,
-  weight_mean = 10,
-  weight_sd = 1,
-  durnpso_mean = 3,
-  durnpso_sd = 1
-)
-```
-
-We add integration points to this data frame in a similar manner to before.
-Again, we need to supply a correlation matrix for the joint covariate distribution; we use the same weighted mean correlation matrix computed earlier from the IPD in the network, which is stored in the network object as `int_cor`.
-```{r}
-new_agd_int <- add_integration(new_agd_int,
-  durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
-  prevsys = distr(qbern, prob = prevsys),
-  bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
-  weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
-  psa = distr(qbern, prob = psa),
-  cor = pso_net$int_cor,
-  n_int = 1000)
-```
-
-Predicted probabilities of achieving PASI 75 in this target population, given a $N(-1.75, 0.08^2)$ distribution on the baseline probit-probability of response on Placebo (at the reference levels of the covariates), are then produced using the `predict()` method:
-```{r pso_pred_FE_new}
-(pso_pred_FE_new <- predict(pso_fit_FE, 
-                            type = "response",
-                            newdata = new_agd_int,
-                            baseline = distr(qnorm, -1.75, 0.08)))
-plot(pso_pred_FE_new, ref_line = c(0, 1))
-```
-
-# References
-
-```{r pso_tests, include=FALSE, eval=params$run_tests}
-library(testthat)
-library(dplyr)
-
-tol <- 0.05
-tol_dic <- 0.1
-
-# FE model parameters
-test_fe <- tribble(
-  ~parameter                            , ~mean, ~sd , ~`2.5%`, ~`50%`, ~`97.5%`,
-  "beta[durnpso]"                       , 0.05 , 0.06, -0.08  , 0.05  , 0.17    ,
-  "beta[prevsys]"                       , -0.13, 0.16, -0.44  , -0.13 , 0.17    ,
-  "beta[bsa]"                           , -0.06, 0.45, -0.98  , -0.05 , 0.78    ,
-  "beta[weight]"                        , 0.04 , 0.03, -0.02  , 0.04  , 0.10    ,
-  "beta[psa]"                           , -0.08, 0.17, -0.42  , -0.08 , 0.25    ,
-  "beta[durnpso:.trtclassTNFa blocker]", -0.03, 0.08, -0.18  , -0.03 , 0.12    ,
-  "beta[durnpso:.trtclassIL blocker]"  , -0.01, 0.07, -0.15  , -0.01 , 0.12    ,
-  "beta[prevsys:.trtclassTNFa blocker]", 0.19 , 0.19, -0.19  , 0.19  , 0.56    ,
-  "beta[prevsys:.trtclassIL blocker]"  , 0.06 , 0.17, -0.28  , 0.06  , 0.40    ,
-  "beta[bsa:.trtclassTNFa blocker]"    , 0.05 , 0.52, -0.95  , 0.04  , 1.10    ,
-  "beta[bsa:.trtclassIL blocker]"      , 0.29 , 0.49, -0.64  , 0.29  , 1.27    ,
-  "beta[weight:.trtclassTNFa blocker]" , -0.17, 0.04, -0.23  , -0.17 , -0.10   ,
-  "beta[weight:.trtclassIL blocker]"   , -0.10, 0.03, -0.16  , -0.10 , -0.03   ,
-  "beta[psa:.trtclassTNFa blocker]"    , -0.06, 0.21, -0.46  , -0.06 , 0.37    ,
-  "beta[psa:.trtclassIL blocker]"      , 0.00 , 0.18, -0.35  , 0.00  , 0.37    ,
-  "d[ETN]"                              , 1.55 , 0.08, 1.39   , 1.55  , 1.72    ,
-  "d[IXE_Q2W]"                          , 2.95 , 0.09, 2.79   , 2.95  , 3.13    ,
-  "d[IXE_Q4W]"                          , 2.54 , 0.08, 2.38   , 2.54  , 2.71    ,
-  "d[SEC_150]"                          , 2.14 , 0.11, 1.93   , 2.14  , 2.37    ,
-  "d[SEC_300]"                          , 2.45 , 0.12, 2.22   , 2.45  , 2.69    )
-
-summary_fe <- summary(pso_fit_FE, pars = c("beta", "d")) %>% 
-  as_tibble() %>% 
-  select(parameter, mean, sd, `2.5%`, `50%`, `97.5%`)
-
-test_that("FE model parameters", {
-  expect_equal(summary_fe, test_fe, tolerance = tol, check.attributes = FALSE)
-})
-
-# FE DIC
-test_that("FE DIC", {
-  expect_equivalent(pso_dic_FE$resdev, 3129.4, tolerance = tol_dic)
-  expect_equivalent(pso_dic_FE$pd, 24.1, tolerance = tol_dic)
-  expect_equivalent(pso_dic_FE$dic, 3153.5, tolerance = tol_dic)
-})
-
-# Population average relative effects in target population
-test_releff_fe_new <- tribble(
-  ~parameter         , ~mean, ~sd , ~`2.5%`, ~`50%`, ~`97.5%`,
-  "d[New 1: ETN]"    , 1.25 , 0.24, 0.81 , 1.24, 1.73  ,
-  "d[New 1: IXE_Q2W]", 2.89 , 0.23, 2.46 , 2.88, 3.36  ,
-  "d[New 1: IXE_Q4W]", 2.48 , 0.23, 2.05 , 2.47, 2.94  ,
-  "d[New 1: SEC_150]", 2.08 , 0.23, 1.64 , 2.07, 2.55  ,
-  "d[New 1: SEC_300]", 2.39 , 0.23, 1.95 , 2.38, 2.86  )
-
-summary_releff_fe_new <- pso_releff_FE_new %>% 
-  as_tibble() %>% 
-  select(parameter, mean, sd, `2.5%`, `50%`, `97.5%`)
-
-test_that("FE PATE in target population", {
-  expect_equal(summary_releff_fe_new, test_releff_fe_new, tolerance = tol, check.attributes = FALSE)
-})
-
-# Check construction of all contrasts
-pso_releff_FE_all_contr <- relative_effects(pso_fit_FE, all_contrasts = TRUE)
-
-# Reconstruct from basic contrasts in each study
-dk <- function(study, trt, sims = pso_releff_FE$sims) {
-  if (trt == "PBO") return(0)
-  else return(sims[ , , paste0("d[", study, ": ", trt, "]"), drop = FALSE])
+func.mult <- function(agd.dt, col_name, value1, value2) {
+  
+  filter_criteria1 <- interp(~y %in% x, .values=list(y = as.name(col_name), x = value1))
+  
+  filter_criteria2 <- interp(~y %in% x, .values=list(y = as.name(col_name), x = value2))
+  
+  net_org <- combine_network(
+    set_ipd(sub_ipd %>% filter_(filter_criteria1),
+            # set_ipd(sub_ipd,
+            study = studyc, 
+            trt = trtc, 
+            r = pasi75,
+            trt_class = trtclass, 
+            trt_ref = "PBO"),
+    
+    set_agd_arm(agd.dt %>% filter_(filter_criteria2), 
+                study = studyc, 
+                trt = trtc, 
+                r = pasi75_r, 
+                n = pasi75_n,
+                trt_class = trtclass,
+                trt_ref = "PBO")
+  )
+  
+  # net_org
+  # 
+  netplot <- plot(net_org, weight_nodes = T, weight_edges = T, show_trt_class = T) +
+    ggplot2::theme(legend.position = "bottom", legend.box = "vertical")
+  
+  
+  ## Add integration points of to the AgD studies in the network
+  net_org <- add_integration(net_org,
+                             durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
+                             prevsys = distr(qbern, prob = prevsys),
+                             bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
+                             weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
+                             psa = distr(qbern, prob = psa),
+                             n_int = 1000)
+  
+  ## fixed effect NL-NMR
+  FE_net_org <- nma(net_org, 
+                    trt_effects = "fixed",
+                    link = "probit", 
+                    likelihood = "bernoulli2",
+                    regression = ~(durnpso + prevsys + bsa + weight + psa)*.trt,
+                    class_interactions = "common",
+                    prior_intercept = normal(scale = 10),
+                    prior_trt = normal(scale = 10),
+                    prior_reg = normal(scale = 10),
+                    init_r = 0.1,
+                    QR = TRUE)
+  
+  return(FE_net_org)
+  
 }
 
-test_all_contr <- tibble(
-  contr = pso_releff_FE_all_contr$summary$parameter,
-  study = factor(stringr::str_extract(contr, "(?<=\\[)(.+)(?=:)")),
-  trtb = stringr::str_extract(contr, "(?<=\\: )(.+)(?= vs\\.)"),
-  trta = stringr::str_extract(contr, "(?<=vs\\. )(.+)(?=\\])")
-) %>% 
-  rowwise() %>% 
-  mutate(as_tibble(multinma:::summary.mcmc_array(dk(study, trtb) - dk(study, trta)))) %>% 
-  select(.study = study, parameter = contr, mean:Rhat)
+## Original ML-NMR
+FE_net_org_df <- func.mult(sub_agd, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE"))
 
-test_that("Construction of all contrasts is correct", {
-  expect_equal(pso_releff_FE_all_contr$summary, test_all_contr, check.attributes = FALSE)
-})
 
-# Check all contrasts in target population
-pso_releff_FE_all_contr_new <- relative_effects(pso_fit_FE, newdata = new_agd_means, all_contrasts = TRUE)
-
-test_all_contr_new <- tibble(
-  contr = pso_releff_FE_all_contr_new$summary$parameter,
-  study = factor(stringr::str_extract(contr, "(?<=\\[)(.+)(?=:)")),
-  trtb = stringr::str_extract(contr, "(?<=\\: )(.+)(?= vs\\.)"),
-  trta = stringr::str_extract(contr, "(?<=vs\\. )(.+)(?=\\])")
-) %>% 
-  rowwise() %>% 
-  mutate(as_tibble(multinma:::summary.mcmc_array(dk(study, trtb, pso_releff_FE_new$sims) - dk(study, trta, pso_releff_FE_new$sims)))) %>% 
-  select(.study = study, parameter = contr, mean:Rhat)
-
-test_that("Construction of all contrasts in target population is correct", {
-  expect_equal(pso_releff_FE_all_contr_new$summary, test_all_contr_new, check.attributes = FALSE)
-})
-
-# Population average response probabilities in target population
-test_pred_fe_new <- tribble(
-  ~parameter            , ~mean, ~sd , ~`2.5%`, ~`50%`, ~`97.5%`,
-  "pred[New 1: PBO]"    , 0.06 , 0.03, 0.02   , 0.06  , 0.12    ,
-  "pred[New 1: ETN]"    , 0.37 , 0.06, 0.26   , 0.37  , 0.48    ,
-  "pred[New 1: IXE_Q2W]", 0.90 , 0.03, 0.84   , 0.90  , 0.94    , 
-  "pred[New 1: IXE_Q4W]", 0.81 , 0.04, 0.72   , 0.81  , 0.88    ,
-  "pred[New 1: SEC_150]", 0.68 , 0.06, 0.57   , 0.68  , 0.78    ,
-  "pred[New 1: SEC_300]", 0.78 , 0.05, 0.68   , 0.78  , 0.86    )
-
-summary_pred_fe_new <- pso_pred_FE_new %>% 
-  as_tibble() %>% 
-  select(parameter, mean, sd, `2.5%`, `50%`, `97.5%`)
-
-test_that("FE average response probabilities in target population", {
-  expect_equal(summary_pred_fe_new, test_pred_fe_new, tolerance = tol, check.attributes = FALSE)
-})
 ```
+
+func.mult this function would store the coefficient of model, network plot, network, and model fit in a list.
+
+### Adding age-specific subgroup results
+```{r, fig.width=8, fig.height=8, out.width="100%"}
+#####################################################################
+##                        selected IPD is IXORA                    ##
+#####################################################################
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_age_agd.sc1.1 <- func.mult(sub_agd1, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA IPD"))
+
+## 3 IPD + 1 IPD subgrouped + 5 AgD
+FE_net_age_agd.sc1.2 <- func.mult(sub_agd1, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA SUB"))
+
+#####################################################################
+##                        selected IPD is UNCOVER-1                ##
+#####################################################################
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_age_agd.sc2.1 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 IPD"))
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_age_agd.sc2.2 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 SUB"))
+
+#####################################################################
+##                        selected IPD is UNCOVER-2                ##
+#####################################################################
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_age_agd.sc3.1 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 IPD"))
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_age_agd.sc3.2 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 SUB"))
+
+#####################################################################
+##                        selected IPD is UNCOVER-3                ##
+#####################################################################
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_age_agd.sc4.1 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 IPD"))
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_age_agd.sc4.2 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 SUB"))
+
+
+```
+
+```{r pop-up}
+
+# rlist::list.save(FE_net_age_agd.sc1.1, 'FE_net_age_agd_sc1_1.rdata')
+# rlist::list.save(FE_net_age_agd.sc1.2, 'FE_net_age_agd_sc1_2.rdata')
+# rlist::list.save(FE_net_age_agd.sc2.1, 'FE_net_age_agd_sc2_1.rdata')
+# rlist::list.save(FE_net_age_agd.sc2.2, 'FE_net_age_agd_sc2_2.rdata')
+# rlist::list.save(FE_net_org_df, 'FE_net_org_df.rdata')
+
+# system('CMD /C "ECHO The R process has finished running && PAUSE"', 
+#        invisible=FALSE, wait=FALSE)
+```
+
+## Summary
+
+Then in the age subgroup results, we would compare the result of original scenario with model with one IPD aggregated and model with one IPD subgroup result
+
+```{r, warning=FALSE, echo=FALSE, message=FALSE}
+
+## combine coefficients of model in one list
+re.list <- list(FE_net_org_df, FE_net_age_agd.sc1.1)
+
+# , FE_net_age_agd.sc1.2, FE_net_age_agd.sc2.1, FE_net_age_agd.sc2.2[[1]], FE_net_age_agd.sc3.1[[1]], FE_net_age_agd.sc3.2[[1]], FE_net_age_agd.sc4.1[[1]], FE_net_age_agd.sc4.2[[1]])
+
+extrac.list <- function (list) {
+listof.coeff <- list()
+listof.dic <- list()
+listof.resd <- list()
+
+for (i in 1:length(re.list)) {
+  dt.out <- summary(re.list[[i]], "d", "beta", "mu") %>%
+  as_tibble() %>% 
+  select(parameter, mean, sd, `2.5%`, `97.5%`) %>%
+  mutate_if(is.numeric, round, digits = 3) %>%
+  mutate("Mean (95% CI)" = paste0(mean, " (", `2.5%`, ", ", `97.5%`, ")")) %>%
+  select(-c(`2.5%`, `97.5%`, mean, sd))
+
+  dt.out$`Mean (95% CI)` <- linebreak(dt.out$`Mean (95% CI)`)
+
+  listof.dic[[i]] <- as.data.frame(dic(re.list[[i]]))
+  # listof.resd[[i]] <- dic(re.list[[i]])
+
+  listof.coeff[[i]] <- dt.out
+  
+}
+
+  comb.list <- list(listof.dic, listof.resd, listof.coeff)
+}
+
+xxxx <- as.vector(dic(x))
+
+## merge together
+coeff.mod <- do.call("bind_cols", comb.list[[3]])
+
+## remove the redundant variables
+coeff.mod <- coeff.mod[,-c(3,5,7,9,11)]
+
+## rename the column name
+names(coeff.mod) <- c("par", "org", "ipd_IXORA", "sub_IXORA", "ipd_UNCOVER_1", "sub_UNCOVER_1", "ipd_UNCOVER_2", "sub_UNCOVER_2", "ipd_UNCOVER_3", "sub_UNCOVER_3")
+
+## reorder the columns
+coeff.mod <- coeff.mod %>% 
+  select(par, org, starts_with("ipd_"), starts_with("sub_"))
+
+## create the latex table
+## intercept of different trials
+kbl(coeff.mod %>% filter(grepl('mu', par)), booktabs = T, longtable = T, caption = "The Comparisons between Different Scenarios", col.names = c("Parameter", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "repeat_header"), full_width = T)  %>%
+  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
+
+## coefficients of model
+kbl(coeff.mod %>% filter(grepl('beta', par)), booktabs = T, longtable = T, caption = "The Comparisons between Different Scenarios", col.names = c("Parameter", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "repeat_header"), full_width = T)  %>%
+  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
+
+## treatment difference compared to Placebo
+kbl(coeff.mod %>% filter(grepl('^d', par)), booktabs = T, longtable = T, caption = "The Comparisons between Different Scenarios", col.names = c("Parameter", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "repeat_header"), full_width = T)  %>%
+  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
+
+```
+
+
+```{r, warning=FALSE, echo=FALSE, message=FALSE}
+refit.list <- list(FE_net_org_df[[1]][["dic"]], FE_net_age_agd.sc1.1[[1]][["dic"]], FE_net_age_agd.sc1.2[[1]][["dic"]], FE_net_age_agd.sc2.1[[1]][["dic"]], FE_net_age_agd.sc2.2[[1]][["dic"]], FE_net_age_agd.sc3.1[[1]][["dic"]], FE_net_age_agd.sc3.2[[1]][["dic"]], FE_net_age_agd.sc4.1[[1]][["dic"]], FE_net_age_agd.sc4.2[[1]][["dic"]])
+
+refit.list1 <- list(FE_net_org_df[[1]][["resdev"]], FE_net_age_agd.sc1.1[[1]][["resdev"]], FE_net_age_agd.sc1.2[[1]][["resdev"]], FE_net_age_agd.sc2.1[[1]][["resdev"]], FE_net_age_agd.sc2.2[[1]][["resdev"]], FE_net_age_agd.sc3.1[[1]][["resdev"]], FE_net_age_agd.sc3.2[[1]][["resdev"]], FE_net_age_agd.sc4.1[[1]][["resdev"]], FE_net_age_agd.sc4.2[[1]][["resdev"]])
+
+## merge together
+coeff.modfit1 <- do.call("bind_cols", listof.dic)
+coeff.modfit2 <- do.call("bind_cols", refit.list1)
+
+coeff.modfit <- bind_rows(coeff.modfit2, coeff.modfit1)
+coeff.modfit <- bind_cols(c("Residual Deviance", "DIC"), coeff.modfit)
+
+names(coeff.modfit) <- c("Parameter", "org", "ipd_IXORA", "sub_IXORA", "ipd_UNCOVER_1", "sub_UNCOVER_1", "ipd_UNCOVER_2", "sub_UNCOVER_2", "ipd_UNCOVER_3", "sub_UNCOVER_3")
+
+## create the latex table
+kbl(coeff.modfit, booktabs = T, longtable = T, caption = "The Model Fit of Different Scenarios", col.names = c("Criteria", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "repeat_header"), full_width = T)  %>%
+  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
+
+
+```
+
+### Adding sex-specific subgroup results
+```{r sex-specific group, fig.width=8, fig.height=8, out.width="100%", echo=FALSE， eval=FALSE}
+
+## selected IPD is IXORA
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_sex_agd.sc1.1 <- func.mult(sub_agd2, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA IPD"))
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_sex_agd.sc1.2 <- func.mult(sub_agd2, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA SUB"))
+
+
+## selected IPD is UNCOVER-1
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_sex_agd.sc2.1 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 IPD"))
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_sex_agd.sc2.2 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 SUB"))
+
+
+## selected IPD is UNCOVER-2
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_sex_agd.sc3.1 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 IPD"))
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_sex_agd.sc3.2 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 SUB"))
+
+
+## selected IPD is UNCOVER-3
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_sex_agd.sc4.1 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 IPD"))
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_sex_agd.sc4.2 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 SUB"))
+
+## combine the model coefficients
+coeff.mod.s <- bind_cols(FE_net_org_df[[1]], 
+                         FE_net_sex_agd.sc1.1[[1]] #%>% filter(grepl('beta', parameter)) 
+                         %>% dplyr::select(-c(parameter)),
+                         FE_net_sex_agd.sc1.2[[1]] %>% dplyr::select(-c(parameter)),
+                         FE_net_sex_agd.sc2.1[[1]] %>% dplyr::select(-c(parameter)), 
+                         FE_net_sex_agd.sc2.2[[1]] %>% dplyr::select(-c(parameter)),
+                         FE_net_sex_agd.sc3.1[[1]] %>% dplyr::select(-c(parameter)), 
+                         FE_net_sex_agd.sc3.2[[1]] %>% dplyr::select(-c(parameter)),
+                         FE_net_sex_agd.sc4.1[[1]] %>% dplyr::select(-c(parameter)), 
+                         FE_net_sex_agd.sc4.2[[1]] %>% dplyr::select(-c(parameter))
+)
+
+## rename the column name
+names(coeff.mod.s) <- c("par", "org", "ipd_IXORA", "sub_IXORA", "ipd_UNCOVER_1", "sub_UNCOVER_1", "ipd_UNCOVER_2", "sub_UNCOVER_2", "ipd_UNCOVER_3", "sub_UNCOVER_3")
+
+## reorder the columns
+coeff.mod.s <- coeff.mod.s %>% 
+  select(par, org, starts_with("ipd_"), starts_with("sub_"))
+
+## create the latex table
+kbl(coeff.mod.s %>% filter(grepl('mu', par)), booktabs = T, longtable = T, caption = "The Comparisons between Different Scenarios", col.names = c("Parameter", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "repeat_header"), full_width = T)  %>%
+  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
+
+kbl(coeff.mod.s %>% filter(grepl('beta', par)), booktabs = T, longtable = T, caption = "The Comparisons between Different Scenarios", col.names = c("Parameter", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "repeat_header"), full_width = T)  %>%
+  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
+
+kbl(coeff.mod.s %>% filter(grepl('^d', par)), booktabs = T, longtable = T, caption = "The Comparisons between Different Scenarios", col.names = c("Parameter", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "repeat_header"), full_width = T)  %>%
+  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
+
+## create table of model fit 
+
+coeff.modfit1.s <- bind_cols(FE_net_org_df[[4]][["dic"]], 
+                             FE_net_age_agd.sc1.1[[4]][["dic"]] ,
+                             FE_net_age_agd.sc1.2[[4]][["dic"]] ,
+                             FE_net_age_agd.sc2.1[[4]][["dic"]] , 
+                             FE_net_age_agd.sc2.2[[4]][["dic"]] ,
+                             FE_net_age_agd.sc3.1[[4]][["dic"]] , 
+                             FE_net_age_agd.sc3.2[[4]][["dic"]] ,
+                             FE_net_age_agd.sc4.1[[4]][["dic"]] , 
+                             FE_net_age_agd.sc4.2[[4]][["dic"]] 
+)
+
+coeff.modfit2.s <- bind_cols(FE_net_org_df[[4]][["resdev"]], 
+                             FE_net_age_agd.sc1.1[[4]][["resdev"]] ,
+                             FE_net_age_agd.sc1.2[[4]][["resdev"]] ,
+                             FE_net_age_agd.sc2.1[[4]][["resdev"]] , 
+                             FE_net_age_agd.sc2.2[[4]][["resdev"]] ,
+                             FE_net_age_agd.sc3.1[[4]][["resdev"]] , 
+                             FE_net_age_agd.sc3.2[[4]][["resdev"]] ,
+                             FE_net_age_agd.sc4.1[[4]][["resdev"]] , 
+                             FE_net_age_agd.sc4.2[[4]][["resdev"]] 
+)
+
+coeff.modfit.s <- bind_rows(coeff.modfit2.s, coeff.modfit1.s)
+coeff.modfit.s <- bind_cols(c("Residual Deviance", "DIC"), coeff.modfit.s)
+
+names(coeff.modfit.s) <- c("Parameter", "org", "ipd_IXORA", "sub_IXORA", "ipd_UNCOVER_1", "sub_UNCOVER_1", "ipd_UNCOVER_2", "sub_UNCOVER_2", "ipd_UNCOVER_3", "sub_UNCOVER_3")
+
+## create the latex table
+kbl(coeff.modfit.s, booktabs = T, longtable = T, caption = "The Model Fit of Different Scenarios", col.names = c("Criteria", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "repeat_header"), full_width = T)  %>%
+  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
+
+```
+
+
+## Relative effects for each study population
+```{r, fig.width=8, fig.height=8, out.width="100%", echo=FALSE}
+
+relate.list <- list(FE_net_org_df[[3]], FE_net_age_agd.sc1.1[[3]], FE_net_age_agd.sc1.2[[3]], FE_net_age_agd.sc2.1[[3]], FE_net_age_agd.sc2.2[[3]], FE_net_age_agd.sc3.1[[3]], FE_net_age_agd.sc3.2[[3]], FE_net_age_agd.sc4.1[[3]], FE_net_age_agd.sc4.2[[3]])
+
+
+
+```
+
+## age-sex subgroup
+
+```{r, fig.width=8, fig.height=8, out.width="100%", eval=FALSE, echo=FALSE}
+
+## selected IPD is IXORA
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_agesex_agd.sc1.1 <- func.mult(sub_agd3, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA IPD"))
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_agesex_agd.sc1.2 <- func.mult(sub_agd3, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA SUB"))
+
+
+## selected IPD is UNCOVER-1
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_agesex_agd.sc2.1 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 IPD"))
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_agesex_agd.sc2.2 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 SUB"))
+
+
+## selected IPD is UNCOVER-2
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_agesex_agd.sc3.1 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 IPD"))
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_agesex_agd.sc3.2 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 SUB"))
+
+
+## selected IPD is UNCOVER-3
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_agesex_agd.sc4.1 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 IPD"))
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_agesex_agd.sc4.2 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 SUB"))
+```
+
+```{r}
+end_time <- Sys.time()
+
+
+start_time-end_time
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
