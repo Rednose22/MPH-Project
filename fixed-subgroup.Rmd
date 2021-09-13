@@ -4,9 +4,9 @@ geometry: "left=1cm,right=1cm,top=2.5cm,bottom=2.5cm"
 output:
   pdf_document:
   latex_engine: lualatex
-fontsize: 11pt
-mainfont: Arial
-linestretch: 1.5
+# fontsize: 11pt
+# mainfont: Arial
+# linestretch: 1.5
 ---
   
 ```{r, include=FALSE, eval=FALSE, echo=FALSE}
@@ -88,20 +88,17 @@ temp1 <- lapply(temp, function (x) {
 ## get the file path
 temp.list <- map(temp, function(x) {paste0("D:\\MPH-Project\\", x)})
 
-for (i in 1) {
-   temp1[i]<- list.load(temp.list[[i]])
-}
 
-FE_net_age_agd.sc1.1 <- list.load(temp.list[[i]])
-FE_net_age_agd.sc1.2 <- list.load(temp.list[[i]])
-FE_net_age_agd.sc2.1 <- list.load(temp.list[[i]])
-FE_net_age_agd.sc2.2 <- list.load(temp.list[[i]])
-FE_net_age_agd.sc3.1 <- list.load(temp.list[[i]])
-FE_net_age_agd.sc3.2 <- list.load(temp.list[[i]])
-FE_net_age_agd.sc4.1 <- list.load(temp.list[[i]])
-FE_net_age_agd.sc4.2 <- list.load(temp.list[[i]])
-
-FE_net_org_df <- list.load(temp.list[[i]])
+# FE_net_age_agd.sc1.1 <- list.load(temp.list[[1]])
+# FE_net_age_agd.sc1.2 <- list.load(temp.list[[2]])
+# FE_net_age_agd.sc2.1 <- list.load(temp.list[[3]])
+# FE_net_age_agd.sc2.2 <- list.load(temp.list[[4]])
+# FE_net_age_agd.sc3.1 <- list.load(temp.list[[5]])
+# FE_net_age_agd.sc3.2 <- list.load(temp.list[[6]])
+# FE_net_age_agd.sc4.1 <- list.load(temp.list[[7]])
+# FE_net_age_agd.sc4.2 <- list.load(temp.list[[8]])
+# 
+# FE_net_org_df.org <- list.load(temp.list[[9]])
 
 # FE_net_sex_agd.sc1.1 <- list.load(temp.list[[i]])
 # FE_net_sex_agd.sc1.2 <- list.load(temp.list[[i]])
@@ -142,8 +139,8 @@ ggplot(full.crs) +
     facet_wrap(vars(studyc, trtc)) +
     labs(title = "Distribution before simulation by trials, studies")+
     guides(fill=guide_legend(title="PASI75")) +
-    xlabs("Age group") +
-    ylabs("Frequency")
+    xlab("Age group") +
+    ylab("Frequency")
 
 ## nest data
 full_ipd.muta <- full_ipd %>%
@@ -151,6 +148,8 @@ full_ipd.muta <- full_ipd %>%
     nest()
 
 ## create model and then predict the f(pasi75)
+set.seed(1234)
+
 full_ipd.muta$data <- map(full_ipd.muta$data, function(df){
   a <- glm(pasi75 ~ age*trtc + bmi*trtc + male*trtc + bsa*trtc + weight*trtc + durnpso*trtc, family = "binomial", data = df, na.action = "na.exclude")
   df %>%
@@ -158,7 +157,6 @@ full_ipd.muta$data <- map(full_ipd.muta$data, function(df){
 })
 
 # Ensures reproducible
-set.seed(1234)
 full_ipd.muta$data <- map(full_ipd.muta$data, function(df){
   df %>%
     mutate(lp2 = if_else(age < 47 & trtc %in% c("PBO"),  lp - 0.2, lp),
@@ -214,11 +212,11 @@ sub_ipd <- full_ipd %>%
                          trtn %in% c(2, 3, 5, 6, 7) ~ "IL blocker",
                          trtn == 4 ~ "TNFa blocker"),
     sub_age = ifelse(age>=47, "gt or eq 47", "lt 47"),
-    sub_sex = ifelse(male == "TRUE", 1, 0))
-
+    sub_sex = ifelse(male == "TRUE", "male", "female"),
+    male = ifelse(male == "TRUE", 1, 0))
 
 ## subgroup result generated from IPD
-## five covariate durnpso, prevsys, bsa, weight, psa
+## five covariate durnpso, prevsys, bsa, weight, psa, (age/male)
 ## include studyc, trt, trtclass, trtn, trtc_long into by vars
 
 sub_eff_func <- function(group_vars, name_) {
@@ -241,6 +239,7 @@ sub_eff_func <- function(group_vars, name_) {
               pasi100_r = sum(pasi100), 
               psa = mean(psa), 
               prevsys = mean(prevsys), 
+              male = mean(male),
               bsa_mean = mean(bsa), 
               bsa_sd = sd(bsa)) %>%
     mutate(studyc = paste(studyc, name_)) 
@@ -329,9 +328,8 @@ sub_ipd %>%
   theme_multinma()
 
 ```
-
 ## ML-NMR in different scenarios
-```{r, warning=FALSE, message=FALSE, eval=FALSE}
+```{r, warning=FALSE, message=FALSE}
 
 ## define a function to run the multiple ML-NMRs
 ## return a list contains nmr model
@@ -340,7 +338,7 @@ sub_ipd %>%
 ## value1: filter criteria in IPD
 ## value2: filter criteria in AgD
 
-func.mult <- function(agd.dt, col_name, value1, value2) {
+func.mult <- function(agd.dt, col_name, value1, value2, sub_var) {
   
   filter_criteria1 <- interp(~y %in% x, .values=list(y = as.name(col_name), x = value1))
   
@@ -371,6 +369,7 @@ func.mult <- function(agd.dt, col_name, value1, value2) {
   
   
   ## Add integration points of to the AgD studies in the network
+  if (sub_var == "age") {
   net_org <- add_integration(net_org,
                              durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
                              prevsys = distr(qbern, prob = prevsys),
@@ -379,12 +378,32 @@ func.mult <- function(agd.dt, col_name, value1, value2) {
                              psa = distr(qbern, prob = psa),
                              age = distr(qgamma, mean = age_mean, sd = age_sd),
                              n_int = 1000)
-  
-  ## fixed effect NL-NMR
+    ## fixed effect NL-NMR
   FE_net_org <- nma(net_org, 
                     trt_effects = "fixed",
                     link = "probit", 
-                    # likelihood = "bernoulli2",
+                    likelihood = "bernoulli2",
+                    regression = ~(durnpso + prevsys + bsa + weight + psa + age)*.trt,
+                    class_interactions = "common",
+                    prior_intercept = normal(scale = 10),
+                    prior_trt = normal(scale = 10),
+                    prior_reg = normal(scale = 10),
+                    init_r = 0.1,
+                    QR = TRUE)
+  }
+  else if (sub_var == "male") {
+    net_org <- add_integration(net_org,
+                             durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
+                             prevsys = distr(qbern, prob = prevsys),
+                             bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
+                             weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
+                             psa = distr(qbern, prob = psa),
+                             male = distr(qbern, prob = male),
+                             n_int = 1000)
+    FE_net_org <- nma(net_org, 
+                    trt_effects = "fixed",
+                    link = "probit", 
+                    likelihood = "bernoulli2",
                     regression = ~(durnpso + prevsys + bsa + weight + psa + age)*.trt,
                     class_interactions = "common",
                     prior_intercept = normal(scale = 10),
@@ -393,6 +412,54 @@ func.mult <- function(agd.dt, col_name, value1, value2) {
                     init_r = 0.1,
                     QR = TRUE)
   
+  } 
+  
+  else if (sub_var == "male+age") {
+    net_org <- add_integration(net_org,
+                             durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
+                             prevsys = distr(qbern, prob = prevsys),
+                             bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
+                             weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
+                             psa = distr(qbern, prob = psa),
+                             male = distr(qbern, prob = male),
+                             age = distr(qgamma, mean = age_mean, sd = age_sd),
+                             n_int = 1000)
+    
+    FE_net_org <- nma(net_org, 
+                    trt_effects = "fixed",
+                    link = "probit", 
+                    likelihood = "",
+                    regression = ~(durnpso + prevsys + bsa + weight + psa + age + male)*.trt,
+                    class_interactions = "common",
+                    prior_intercept = normal(scale = 10),
+                    prior_trt = normal(scale = 10),
+                    prior_reg = normal(scale = 10),
+                    init_r = 0.1,
+                    QR = TRUE)
+    
+  }
+  else {
+    net_org <- add_integration(net_org,
+                             durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
+                             prevsys = distr(qbern, prob = prevsys),
+                             bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
+                             weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
+                             psa = distr(qbern, prob = psa),
+                             n_int = 1000)
+    
+    FE_net_org <- nma(net_org, 
+                    trt_effects = "fixed",
+                    link = "probit", 
+                    likelihood = "bernoulli2",
+                    regression = ~(durnpso + prevsys + bsa + weight + psa)*.trt,
+                    class_interactions = "common",
+                    prior_intercept = normal(scale = 10),
+                    prior_trt = normal(scale = 10),
+                    prior_reg = normal(scale = 10),
+                    init_r = 0.1,
+                    QR = TRUE)
+  }
+
   return(FE_net_org)
   
 }
@@ -403,19 +470,20 @@ func.mult <- function(agd.dt, col_name, value1, value2) {
 func.mult function would store the model of different scenarios.
 
 ### Original scenario
-```{r, eval=FALSE, message=FALSE, warning=FALSE}
+```{r}
 #####################################################################
 ##                        Original IPD+AGD                         ##
 #####################################################################
 
 ## 4 IPD + 5 AgD
 FE_net_org_df <- func.mult(sub_agd, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), 
-                           c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE"))
+                           c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE"), "age")
+
 
 ```
 
 ### Scenario 1 (3 IPD + 1 aggregated IPD + 5 AGD)
-```{r, eval=FALSE, message=FALSE, warning=FALSE}
+```{r}
 
 #####################################################################
 ##                        selected IPD is IXORA                    ##
@@ -423,7 +491,7 @@ FE_net_org_df <- func.mult(sub_agd, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2
 
 ## 3 IPD + 1 IPD aggregated + 5 AgD
 FE_net_age_agd.sc1.1 <- func.mult(sub_agd1, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA IPD"))
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA IPD"), "age")
 
 #####################################################################
 ##                        selected IPD is UNCOVER-1                ##
@@ -431,7 +499,7 @@ FE_net_age_agd.sc1.1 <- func.mult(sub_agd1, "studyc", c("UNCOVER-1", "UNCOVER-2"
 
 ## 3 IPD + 1 IPD aggregated + 5 AgD
 FE_net_age_agd.sc2.1 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 IPD"))
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 IPD"), "age")
 
 #####################################################################
 ##                        selected IPD is UNCOVER-2                ##
@@ -439,7 +507,7 @@ FE_net_age_agd.sc2.1 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-2", "U
 
 ## 3 IPD + 1 IPD aggregated + 5 AgD
 FE_net_age_agd.sc3.1 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 IPD"))
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 IPD"), "age")
 
 #####################################################################
 ##                        selected IPD is UNCOVER-3                ##
@@ -447,14 +515,13 @@ FE_net_age_agd.sc3.1 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "U
 
 ## 3 IPD + 1 IPD aggregated + 5 AgD
 FE_net_age_agd.sc4.1 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 IPD"))
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 IPD"), "age")
 
 ```
 
-### Scenario 2 (3 IPD + 1 subgrouped IPD + 5 AGD)
-### Age-specific subgroup results
+### Scenario 2 (3 IPD + 1 subgrouped IPD + 5 AGD: Age-specific subgroup results)
 
-```{r, eval=FALSE, message=FALSE, warning=FALSE}
+```{r}
 
 #####################################################################
 ##                        selected IPD is IXORA                    ##
@@ -462,7 +529,7 @@ FE_net_age_agd.sc4.1 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "U
 
 ## 3 IPD + 1 IPD subgrouped + 5 AgD
 FE_net_age_agd.sc1.2 <- func.mult(sub_agd1, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA SUB"))
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA SUB"), "age")
 
 #####################################################################
 ##                        selected IPD is UNCOVER-1                ##
@@ -470,7 +537,7 @@ FE_net_age_agd.sc1.2 <- func.mult(sub_agd1, "studyc", c("UNCOVER-1", "UNCOVER-2"
 
 ## 3 IPD + 1 IPD subgroup + 5 AgD
 FE_net_age_agd.sc2.2 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 SUB"))
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 SUB"), "age")
 
 #####################################################################
 ##                        selected IPD is UNCOVER-2                ##
@@ -478,7 +545,7 @@ FE_net_age_agd.sc2.2 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-2", "U
 
 ## 3 IPD + 1 IPD subgroup + 5 AgD
 FE_net_age_agd.sc3.2 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 SUB"))
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 SUB"), "age")
 
 #####################################################################
 ##                        selected IPD is UNCOVER-3                ##
@@ -486,7 +553,7 @@ FE_net_age_agd.sc3.2 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "U
 
 ## 3 IPD + 1 IPD subgroup + 5 AgD
 FE_net_age_agd.sc4.2 <- func.mult(sub_agd1, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 SUB"))
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 SUB"), "age")
 
 ```
 
@@ -504,9 +571,9 @@ rlist::list.save(FE_net_age_agd.sc4.2, 'D:\\MPH-Project\\FE_net_age_agd_sc4.2.rd
 
 ```
 
-## Coefficients of model
+## Model comparison under different scenarios
 
-Then in the age subgroup results, we would compare the result of original scenario, scenario 1, and scenario 2.
+Then in the age subgroup results, we would compare the result of original scenario, scenario 1, and scenario 2 with age-specific subgroup effects.
 
 ```{r, warning=FALSE, message=FALSE, include=FALSE}
 
@@ -534,17 +601,17 @@ for (i in 1:length(list.new)) {
   ## model fit
   mf.out <- dic(list.new[[i]])
   
-  dic <- mf.out[["dic"]]
-  pd <-  mf.out[["pd"]]
-  resd <-  mf.out[["resdev"]]
+  # dic <- mf.out[["dic"]]
+  # pd <-  mf.out[["pd"]]
+  # resd <-  mf.out[["resdev"]]
   ## relative treatment
   # rt_fig <- as.data.frame(relative_effects(list.new[[i]]))
-  rt_fig <- relative_effects(list.new[[i]])
+  rt_fig <- relative_effects(list.new[[i]])[["summary"]]
  
   listof.coeff[[i]] <- dt.out
-  listof.dic[[i]] <- dic
-  listof.pd[[i]] <- pd
-  listof.resd[[i]] <- resd
+  # listof.dic[[i]] <- dic
+  # listof.pd[[i]] <- pd
+  # listof.resd[[i]] <- resd
   listof.releff[[i]] <- rt_fig
 
 }
@@ -557,7 +624,7 @@ comb.list.age <- extrac.list(re.list)
 
 ```
 
-### Tables of model result
+### Tables of model results
 ```{r, message=FALSE, warning=FALSE, echo=FALSE}
 
 ## set the coefficients together
@@ -565,7 +632,7 @@ coeff.mod1.f <- do.call("bind_rows", comb.list.age[[1]]) %>%
   mutate(scenario = case_when(id %in% 1 ~ "ipd + agd", 
                               id %in% c(2,4,6,8) ~ "ipd + agg ipd + agd",
                               id %in% c(3,5,7,9) ~ "ipd + sub ipd + agd")) %>%
-  group_by(scenario, parameter) %>%
+  group_by(parameter, scenario) %>%
   summarise_at(c("mean", "lower", "upper"), mean) %>%
   mutate_if(is.numeric, round, digits = 3) 
 
@@ -606,9 +673,8 @@ kbl(coeff.mod1.t %>% filter(grepl('^d', parameter)) %>% mutate(parameter = subst
 ```{r fig.height=12, fig.width=12}
 ## forest plot to combine results of different scenarios
 coeff.mod.f <- coeff.mod1.f  %>%
-  ungroup(parameter) %>%
   mutate("Mean (95% CI)" = paste0(mean, " (", lower, ", ", upper, ")")) %>%
-  mutate(paramter = ifelse(grepl('mu', parameter), 
+  mutate(parameter = ifelse(grepl('mu', parameter), 
                            substring(parameter, 4, nchar(parameter)-1), 
                     ifelse(grepl('beta', parameter), 
                            substring(parameter, 6, nchar(parameter)-1), 
@@ -629,8 +695,6 @@ ggplot(coeff.mod.f %>% filter(grepl(filter_1, parameter)), aes(x = mean, y = par
 ## age and interaction
 p1 <- coe.forest.fig("age", -0.55, 0.2, -0.4, 0.4)
 
-p1
-
 ## weight and interaction
 p2 <- coe.forest.fig("weight", -0.7, 0.2, -0.5, 0.4)
 
@@ -646,200 +710,81 @@ p5 <- coe.forest.fig("durnpso", -0.6, 0.3, -0.4, 0.4)
 ## bsa and interaction
 p6 <- coe.forest.fig("bsa", -6, 3, -4.5, 0.4)
 
-grid_arrange_shared_legend(p1, p2, p3, p4, p5, p6, ncol=2, nrow=3, position='bottom')
+grid_arrange_shared_legend(p1, p2, p3, p4, p5, p6, ncol=2, nrow=3, position='bottom', top = grid::textGrob('Forest plot of model coefficients'))
 
 ```
 
-## Comparison of different scenarios by trial
-```{r, warning=FALSE, message=FALSE, eval=FALSE, include=FALSE}
+## Relative effects under different scenarios
 
-#####################################################################
-##        Model information under different scenarios              ##
-#####################################################################
-list.coe.trial <- list()
+```{r fig.height=8, fig.width=8, message=FALSE, out.width="100%"}
 
-for (i in 1:length(re.list)) {
-  dt.out.t <- summary(re.list[[i]], "d", "beta", "mu") %>%
-  as_tibble() %>% 
-  select(parameter, mean, sd, `2.5%`, `97.5%`) %>%
-  mutate_if(is.numeric, round, digits = 3) %>%
-  mutate("Mean (95% CI)" = paste0(mean, " (", `2.5%`, ", ", `97.5%`, ")")) %>%
-  select(-c(`2.5%`, `97.5%`, mean, sd))  
-
-  dt.out.t$`Mean (95% CI)` <- linebreak(dt.out.t$`Mean (95% CI)`)
-
-  list.coe.trial[[i]] <- dt.out.t
-}
-
-## merge the coefficients together
-coeff.mod <- do.call("bind_cols", list.coe.trial)
-
-## remove the redundant variables
-coeff.mod <- coeff.mod[,-c(3,5,7,9,11,13,15,17)]
-
-## rename the column name
-names(coeff.mod) <- c("par", "org", "ipd_IXORA", "sub_IXORA", "ipd_UNCOVER_1", "sub_UNCOVER_1", 
-                      "ipd_UNCOVER_2", "sub_UNCOVER_2", "ipd_UNCOVER_3", "sub_UNCOVER_3")
-
-## reorder the columns
-coeff.mod <- coeff.mod %>% 
-  select(par, org, starts_with("ipd_"), starts_with("sub_"))
-
-## create the latex table
-## intercept of different trials
-kbl(coeff.mod %>% filter(grepl('mu', par)) %>% mutate(par = substring(par, 4, nchar(par)-1)), booktabs = T, 
-    caption = "The Comparisons between Different Scenarios", 
-    col.names = c("study-specific\nIntercept", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2",
-                  "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
-  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T, font_size = 7)  %>%
-  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, 
-                     "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
-
-## coefficients of model
-kbl(coeff.mod %>% filter(grepl('beta', par)) %>% mutate(par = substring(par, 6, nchar(par)-1)), booktabs = T, 
-    caption = "The Comparisons between Different Scenarios", 
-    col.names = c("Coefficient", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2",
-                  "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
-  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T, font_size = 7)  %>%
-  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, 
-                     "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
-
-## treatment difference compared to Placebo
-kbl(coeff.mod %>% filter(grepl('^d', par)) %>% mutate(par = substring(par, 3, nchar(par)-1)), booktabs = T, 
-    caption = "The Comparisons between Different Scenarios", 
-    col.names = c("Direct\ndifference", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2",
-                  "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
-  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T, font_size = 7)  %>%
-  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, 
-                     "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
-  
-```
-
-
-```{r, warning=FALSE, message=FALSE, eval=FALSE}
-## Model fit by scenarios, trials
-## merge together
-coeff.modfit1 <- do.call("bind_cols", comb.list.age[[2]])
-coeff.modfit2 <- do.call("bind_cols", comb.list.age[[3]])
-coeff.modfit3 <- do.call("bind_cols", comb.list.age[[4]])
-
-coeff.modfit <- bind_rows(coeff.modfit2, coeff.modfit1, coeff.modfit3)
-coeff.modfit <- bind_cols(c("Residual Deviance", "pD", "DIC"), coeff.modfit)
-
-names(coeff.modfit) <- c("Parameter", "org", "ipd_IXORA", "sub_IXORA", "ipd_UNCOVER_1", "sub_UNCOVER_1", 
-                         "ipd_UNCOVER_2", "sub_UNCOVER_2", "ipd_UNCOVER_3", "sub_UNCOVER_3")
-
-## create the latex table
-kbl(coeff.modfit, booktabs = T, caption = "The Model Fit of Different Scenarios", 
-    col.names = c("Criteria", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2",
-                  "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
-  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T, font_size = 7)  %>%
-  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, 
-                     "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
-
-
-```
-
-## Relative effects for each study population
-## 4 IPD + 5 AgD
-```{r fig.height=8, fig.width=8, message=FALSE, out.width="100%", eval=FALSE}
-
-# comb.list.age[[4]][1]
-# comb.list.age[[4]][2]
-
+reff.list <- list(comb.list.age[[5]][[1]], comb.list.age[[5]][[2]], comb.list.age[[5]][[3]],
+                  comb.list.age[[5]][[4]], comb.list.age[[5]][[5]],
+                  comb.list.age[[5]][[6]], comb.list.age[[5]][[7]],
+                  comb.list.age[[5]][[8]], comb.list.age[[5]][[9]])
 
 # draw the figures of relative effects
-releff.dt <- rbindlist(comb.list.age[[4]], idcol="ID") %>%
-  arrange(ID, parameter, .study) %>%
-  mutate(IDc = case_when(ID == 1 ~ "base case",
-                         ID == 2 ~ "Scenario 1",
-                         ID == 3 ~ "Scenario 2",
-                         ID == 4 ~ "Scenario 3",
-                         ID == 5 ~ "Scenario 4",
-                         ID == 6 ~ "Scenario 5",
-                         ID == 7 ~ "Scenario 6",
-                         ID == 8 ~ "Scenario 7",
-                         ID == 9 ~ "Scenario 8"))
+releff.dt <- rbindlist(reff.list, idcol="id") %>%
+  mutate(scenario = case_when(id %in% 1 ~ "ipd + agd", 
+                              id %in% c(2,4,6,8) ~ "ipd + agg ipd + agd",
+                              id %in% c(3,5,7,9) ~ "ipd + sub ipd + agd")) %>%
+  group_by(parameter, scenario) %>%
+  summarise_at(c("mean", "2.5%", "97.5%"), mean) %>%
+  mutate_if(is.numeric, round, digits = 3) %>%
+  mutate("Mean (95% CI)" = paste0(mean, " (", "2.5%", ", ", "97.5%", ")")) %>%
+  pivot_wider(id_cols = parameter, names_from = scenario, names_sep = " ", values_from = c(`Mean (95% CI)`)) %>%
+  filter(!is.na(`ipd + agd`)) %>%
+  mutate(parameter = substring(parameter, 3, nchar(parameter)-1))
 
-releff.overall <- releff.dt %>%
-  mutate(param = trimws(word(ex_bracket(parameter, pattern = "square"), 2, sep=":"))) %>%
-  group_by(IDc, param) %>%
-  summarise_at(over_mean = mean(mean))
+releff.dt$r.numb <- seq.int(nrow(releff.dt))
 
-## generate the information in different study
-## to present in the title
+## generate long table
+kbl(releff.dt %>% filter(r.numb < 37) %>% select(-r.numb), booktabs = T, align = "c",
+    caption = "The comparisons of relative treatment effects between different scenarios", 
+    col.names = c("Intercepts", "4 IPD + 5 AgD", "3 IPD + 1 aggregated IPD + 5 AgD", 
+                     "3 IPD + 1 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T)
 
-## get the distinct study
-# tem.1 <- releff.dt %>%
-#   distinct(.study) %>%
-#   arrange(.study)
-#
-# stdy <- tem.1$.study
-#
-# stdy <- set_names(stdy)
-
-
-# reff.fig <- function (x)  {
-  # dd <- releff.dt %>% filter(.study == x)
-  reff.fig.age <- ggplot(releff.overall) +
-  geom_bar(aes(x=IDc, y=over_mean), stat="identity", fill="#124e82", width=0.5) +
-  # geom_errorbar(aes(x=IDc, ymin=mean-sd, ymax=mean+sd), width=0.2, colour="#d06d67", size=1) +
-  labs(title = "Overall treatment comparison (derived as mean of all specific studies)") +
-  xlab("Simulation") +
-  ylab("Probit Difference") +
-  facet_grid(~param) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-# }
-
-reff.fig.age
-# reff.fig.age <- map(stdy, ~reff.fig(.x))
+kbl(releff.dt %>% filter(r.numb >= 37) %>% select(-r.numb), booktabs = T, align = "c",
+    caption = "The comparisons of relative treatment effects between different scenarios (continued)",
+    col.names = c("Intercepts", "4 IPD + 5 AgD", "3 IPD + 1 aggregated IPD + 5 AgD",
+                     "3 IPD + 1 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position", "repeat_header"), full_width = T)
 
 ```
 
 
 
-## sex-specific subgroup results
+```{r sex-specific group, eval=FALSE, include=FALSE}
+### Scenario 2 (3 IPD + 1 subgrouped IPD + 5 AGD: Age-specific subgroup results)
 
-```{r sex-specific group, eval=FALSE}
-
-## selected IPD is IXORA
-## 3 IPD + 1 IPD aggregated + 5 AgD
-FE_net_sex_agd.sc1.1 <- func.mult(sub_agd2, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA IPD"))
-
+#####################################################################
+##                        selected IPD is IXORA                ##
+#####################################################################
 ## 3 IPD + 1 IPD aggregated + 5 AgD
 FE_net_sex_agd.sc1.2 <- func.mult(sub_agd2, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), 
                                   c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA SUB"))
 
-
-## selected IPD is UNCOVER-1
-
-## 3 IPD + 1 IPD aggregated + 5 AgD
-FE_net_sex_agd.sc2.1 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 IPD"))
-
+#####################################################################
+##                        selected IPD is UNCOVER-2                ##
+#####################################################################
 ## 3 IPD + 1 IPD subgroup + 5 AgD
 FE_net_sex_agd.sc2.2 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), 
                                   c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 SUB"))
 
 
 ## selected IPD is UNCOVER-2
-
-## 3 IPD + 1 IPD aggregated + 5 AgD
-FE_net_sex_agd.sc3.1 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 IPD"))
-
+#####################################################################
+##                        selected IPD is UNCOVER-2                ##
+#####################################################################
 ## 3 IPD + 1 IPD subgroup + 5 AgD
 FE_net_sex_agd.sc3.2 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), 
                                   c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 SUB"))
 
 
-## selected IPD is UNCOVER-3
-
-## 3 IPD + 1 IPD aggregated + 5 AgD
-FE_net_sex_agd.sc4.1 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), 
-                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 IPD"))
-
+#####################################################################
+##                        selected IPD is UNCOVER-3                ##
+#####################################################################
 ## 3 IPD + 1 IPD subgroup + 5 AgD
 FE_net_sex_agd.sc4.2 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), 
                                   c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 SUB"))
@@ -856,139 +801,11 @@ FE_net_sex_agd.sc4.2 <- func.mult(sub_agd2, "studyc", c("IXORA", "UNCOVER-1", "U
 
 ```
 
-## Coefficients of model
 
-```{r, fig.width=10, fig.height=10, out.width="100%", message=FALSE, eval=FALSE}
-## combine the model coefficients
-resex.list <- list(FE_net_org_df, FE_net_sex_agd.sc1.1, FE_net_sex_agd.sc1.2, FE_net_sex_agd.sc2.1, 
-                   FE_net_sex_agd.sc2.2, FE_net_sex_agd.sc3.1, FE_net_sex_agd.sc3.2, FE_net_sex_agd.sc4.1, 
-                   FE_net_sex_agd.sc4.2)
-
-comb.list.sex <- extrac.list(resex.list)
-
-## merge together
-coeff.mod.s <- do.call("bind_cols", comb.list.sex[[1]])
-
-## remove the redundant variables
-coeff.mod.s <- coeff.mod.s[,-c(3,5,7,9,11,13,15,17)]
-
-## rename the column name
-names(coeff.mod.s) <- c("par", "org", "ipd_IXORA", "sub_IXORA", "ipd_UNCOVER_1", "sub_UNCOVER_1", 
-                        "ipd_UNCOVER_2", "sub_UNCOVER_2", "ipd_UNCOVER_3", "sub_UNCOVER_3")
-
-## reorder the columns
-coeff.mod.s <- coeff.mod.s %>% 
-  select(par, org, starts_with("ipd_"), starts_with("sub_"))
-
-## intercept
-kbl(coeff.mod.s %>% filter(grepl('mu', par)) %>% mutate(par = substring(par, 4, nchar(par)-1)), booktabs = T, 
-    caption = "The Comparisons between Different Scenarios", 
-    col.names = c("Study-specific\nIntercept", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2",
-                  "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
-  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T, font_size = 7)  %>%
-  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, 
-                     "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
-
-## coefficients of model
-kbl(coeff.mod.s %>% filter(grepl('beta', par)) %>% mutate(par = substring(par, 6, nchar(par)-1)), booktabs = T, 
-    caption = "The Comparisons between Different Scenarios", 
-    col.names = c("Coefficient", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2",
-                  "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
-  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T, font_size = 7)  %>%
-  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, 
-                     "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4)) %>%
-  column_spec(1, width = "2.5cm")
-
-## treatment difference compared to Placebo
-kbl(coeff.mod.s %>% filter(grepl('^d', par)) %>% mutate(par = substring(par, 3, nchar(par)-1)), booktabs = T, 
-    caption = "The Comparisons between Different Scenarios", 
-    col.names = c("Direct\ndifference", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2",
-                  "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
-  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T, font_size = 7)  %>%
-  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, 
-                     "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
-
-```
-
-## Model fit
-
-```{r, fig.width=10, fig.height=10, out.width="100%", message=FALSE, eval=FALSE}
-## create table of model fit 
-coeff.modfit1.s <- do.call("bind_cols", comb.list.sex[[2]])
-coeff.modfit2.s <- do.call("bind_cols", comb.list.sex[[3]])
-
-coeff.modfit.s <- bind_rows(coeff.modfit2.s, coeff.modfit1.s)
-coeff.modfit.s <- bind_cols(c("Residual Deviance", "DIC"), coeff.modfit.s)
-
-names(coeff.modfit.s) <- c("Parameter", "org", "ipd_IXORA", "sub_IXORA", "ipd_UNCOVER_1", "sub_UNCOVER_1", "ipd_UNCOVER_2", "sub_UNCOVER_2", "ipd_UNCOVER_3", "sub_UNCOVER_3")
-
-## create the latex table
-kbl(coeff.modfit.s, booktabs = T, caption = "The Model Fit of Different Scenarios", 
-    col.names = c("Criteria", "Original scenario", "IXORA", "UNCOVER-1", "UNCOVER-2",
-                  "UNCOVER-3", "IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3")) %>%
-  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T, font_size = 7)  %>%
-  add_header_above(c(" " = 1, "4 IPD + 5 AgD" = 1, "3 IPD + 1 aggregated IPD + 5 AgD" = 4, 
-                     "3 IPD + 1 sub-grouped IPD + 5 AgD" = 4))
-
-```
-
-## relative effect in each study population
-
-```{r, fig.width=8, fig.height=8, out.width="100%", eval=FALSE}
-
-## draw the figures of relative effects
-releff.dt.sex <- rbindlist(comb.list.sex[[4]], idcol="ID") %>%
-  arrange(.study, parameter, ID) %>%
-  mutate(IDc = case_when(ID == 1 ~ "base case",
-                         ID == 2 ~ "Scenario 1",
-                         ID == 3 ~ "Scenario 2",
-                         ID == 4 ~ "Scenario 3",
-                         ID == 5 ~ "Scenario 4",
-                         ID == 6 ~ "Scenario 5",
-                         ID == 7 ~ "Scenario 6",
-                         ID == 8 ~ "Scenario 7",
-                         ID == 9 ~ "Scenario 8"))
-
-
-## generate the information in different study 
-## to present in the title
-
-## get the distinct study
-tem.1 <- releff.dt.sex %>%
-  distinct(.study) %>%
-  arrange(.study) 
-
-stdy.s <- tem.1$.study
-
-stdy.s <- set_names(stdy.s)
-
-
-reff.fig.s <- function (x)  {
-  dd <- releff.dt.sex %>% filter(.study == x)
-  ggplot(dd) +
-  geom_bar(aes(x=IDc, y=mean), stat="identity", fill="#124e82", width=0.5) +
-  geom_errorbar(aes(x=IDc, ymin=mean-sd, ymax=mean+sd), width=0.2, colour="#d06d67", size=1) +
-  labs(title = paste0("Study: ", x)) +
-  xlab("Simulation") +
-  ylab("Probit Difference") +
-  facet_grid(~parameter) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-}
-
-
-reff.fig.sex <- map(stdy.s, ~reff.fig.s(.x))
-reff.fig.sex
-
-```
-
-## age-sex subgroup NOT RUN
-
-```{r, fig.width=8, fig.height=8, out.width="100%", eval=FALSE}
+```{r, fig.width=8, fig.height=8, out.width="100%", eval=FALSE, include=FALSE}
+### Scenario 2 (3 IPD + 1 subgrouped IPD + 5 AGD: Age*Sex specific subgroup results)
 
 ## selected IPD is IXORA
-## 3 IPD + 1 IPD aggregated + 5 AgD
-FE_net_agesex_agd.sc1.1 <- func.mult(sub_agd3, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), 
-                                     c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA IPD"))
 
 ## 3 IPD + 1 IPD aggregated + 5 AgD
 FE_net_agesex_agd.sc1.2 <- func.mult(sub_agd3, "studyc", c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), 
@@ -997,10 +814,6 @@ FE_net_agesex_agd.sc1.2 <- func.mult(sub_agd3, "studyc", c("UNCOVER-1", "UNCOVER
 
 ## selected IPD is UNCOVER-1
 
-## 3 IPD + 1 IPD aggregated + 5 AgD
-FE_net_agesex_agd.sc2.1 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), 
-                                     c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 IPD"))
-
 ## 3 IPD + 1 IPD subgroup + 5 AgD
 FE_net_agesex_agd.sc2.2 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-2", "UNCOVER-3"), 
                                      c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-1 SUB"))
@@ -1008,20 +821,12 @@ FE_net_agesex_agd.sc2.2 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-2",
 
 ## selected IPD is UNCOVER-2
 
-## 3 IPD + 1 IPD aggregated + 5 AgD
-FE_net_agesex_agd.sc3.1 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), 
-                                     c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 IPD"))
-
 ## 3 IPD + 1 IPD subgroup + 5 AgD
 FE_net_agesex_agd.sc3.2 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-3"), 
                                      c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-2 SUB"))
 
 
 ## selected IPD is UNCOVER-3
-
-## 3 IPD + 1 IPD aggregated + 5 AgD
-FE_net_agesex_agd.sc4.1 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), 
-                                     c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "UNCOVER-3 IPD"))
 
 ## 3 IPD + 1 IPD subgroup + 5 AgD
 FE_net_agesex_agd.sc4.2 <- func.mult(sub_agd3, "studyc", c("IXORA", "UNCOVER-1", "UNCOVER-2"), 
