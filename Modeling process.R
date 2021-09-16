@@ -1,6 +1,18 @@
 #####################################################################
 ##                        Program set up                           ##
 #####################################################################
+library(multinma)
+library(tidyverse)
+library(lazyeval)
+library(data.table)
+library(purrr)
+library(kableExtra)
+library(rlist) ## save the list as rdata
+library(stringr)
+library(qdapRegex)
+library(gridExtra)
+library(lemon)
+
 options(mc.cores = parallel::detectCores())
 
 nc <- switch(tolower(Sys.getenv("_R_CHECK_LIMIT_CORES_")), 
@@ -37,13 +49,13 @@ full.crs <- full_ipd %>%
   count(studyc, trtc, cat_pas, sub_age)
 
 ## histogram by studyc before redistribution
-ggplot(full.crs) +
-  geom_bar(aes(x=sub_age, y=n, fill = cat_pas), stat = "identity") +
-  facet_wrap(vars(studyc, trtc)) +
-  labs(title = "Distribution before simulation by trials, studies")+
-  guides(fill=guide_legend(title="PASI75")) +
-  xlab("Age group") +
-  ylab("Frequency")
+# ggplot(full.crs) +
+#   geom_bar(aes(x=sub_age, y=n, fill = cat_pas), stat = "identity") +
+#   facet_wrap(vars(studyc, trtc)) +
+#   labs(title = "Distribution before simulation by trials, studies")+
+#   guides(fill=guide_legend(title="PASI75")) +
+#   xlab("Age group") +
+#   ylab("Frequency")
 
 ## nest data
 full_ipd.muta <- full_ipd %>%
@@ -79,11 +91,11 @@ full.crs2 <- full_ipd %>%
   count(studyc, trtc, cat_pas, sub_age)
 
 ## histogram by studyc after redistribution
-ggplot(full.crs2) +
-  geom_bar(aes(x=sub_age, y=n, fill = cat_pas), stat = "identity") +
-  facet_wrap(vars(studyc, trtc)) +
-  labs(title = "Distribution after simulation by trials, studies") +
-  guides(fill=guide_legend(title="PASI75"))
+# ggplot(full.crs2) +
+#   geom_bar(aes(x=sub_age, y=n, fill = cat_pas), stat = "identity") +
+#   facet_wrap(vars(studyc, trtc)) +
+#   labs(title = "Distribution after simulation by trials, studies") +
+#   guides(fill=guide_legend(title="PASI75"))
 
 
 #####################################################################
@@ -488,6 +500,6 @@ rlist::list.save(FE_net_age_agd.sc2.2, 'D:\\MPH-Project\\FE_net_age_agd.sc2.2.rd
 rlist::list.save(FE_net_age_agd.sc3.1, 'D:\\MPH-Project\\FE_net_age_agd.sc3.1.rdata')
 rlist::list.save(FE_net_age_agd.sc3.2, 'D:\\MPH-Project\\FE_net_age_agd.sc3.2.rdata')
 rlist::list.save(FE_net_age_agd.sc4.1, 'D:\\MPH-Project\\FE_net_age_agd.sc4.1.rdata')
-rlist::list.save(FE_net_age_agd.sc4.2, 'D:\\MPH-Project\\FE_net_age_agd_sc4.2.rdata')
+rlist::list.save(FE_net_age_agd.sc4.2, 'D:\\MPH-Project\\FE_net_age_agd.sc4.2.rdata')
 rlist::list.save(FE_net_age_agd.sc4.3, 'D:\\MPH-Project\\FE_net_age_agd.sc4.3.rdata')
-rlist::list.save(FE_net_age_agd.sc4.4, 'D:\\MPH-Project\\FE_net_age_agd_sc4.4.rdata')
+rlist::list.save(FE_net_age_agd.sc4.4, 'D:\\MPH-Project\\FE_net_age_agd.sc4.4.rdata')
