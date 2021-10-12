@@ -44,7 +44,7 @@ full_agd <- plaque_psoriasis_agd
 
 ## initial count by studyc, age group, pasi75 group
 full.crs <- full_ipd %>%
-  mutate(sub_age = ifelse(age>=47, "gt or eq 47", "lt 47"),
+  mutate(sub_age = ifelse(age>=46, "gt or eq 46", "lt 46"),
          cat_pas = ifelse(pasi75 == 1, "yes", "no")) %>%
   count(studyc, trtc, cat_pas, sub_age)
 
@@ -74,8 +74,8 @@ full_ipd.muta$data <- map(full_ipd.muta$data, function(df){
 # Ensures reproducible
 full_ipd.muta$data <- map(full_ipd.muta$data, function(df){
   df %>%
-    mutate(lp2 = if_else(age < 47 & trtc %in% c("PBO"),  lp - 0.2, lp),
-           lp2 = if_else(age < 47 & !trtc %in% c("PBO"), lp2 + 0.2, lp2),
+    mutate(lp2 = if_else(age < 46 & trtc %in% c("PBO"),  lp - 0.2, lp),
+           lp2 = if_else(age < 46 & !trtc %in% c("PBO"), lp2 + 0.2, lp2),
            risk = plogis(lp2),
            ## Next line is stochastic
            pasi75_sim = rbinom(n = length(lp2), size = 1, prob = risk))
@@ -87,7 +87,7 @@ full_ipd <- full_ipd.muta %>%
 
 full.crs2 <- full_ipd %>%
   mutate(cat_pas = ifelse(pasi75_sim == 1, "yes", "no"),
-         sub_age = ifelse(age>=47, "gt or eq 47", "lt 47")) %>%
+         sub_age = ifelse(age>=46, "gt or eq 46", "lt 46")) %>%
   count(studyc, trtc, cat_pas, sub_age)
 
 ## histogram by studyc after redistribution
@@ -114,7 +114,7 @@ sub_ipd <- full_ipd %>%
     trtclass = case_when(trtn == 1 ~ "Placebo",
                          trtn %in% c(2, 3, 5, 6, 7) ~ "IL blocker",
                          trtn == 4 ~ "TNFa blocker"),
-    sub_age = ifelse(age>=47, "gt or eq 47", "lt 47"),
+    sub_age = ifelse(age>=46, "gt or eq 46", "lt 46"),
     sub_sex = ifelse(male == "TRUE", "male", "female"),
     male = ifelse(male == "TRUE", 1, 0))
 
@@ -226,7 +226,7 @@ func.mult <- function(agd.dt, col_name, value1, value2, sub_var) {
             # set_ipd(sub_ipd,
             study = studyc, 
             trt = trtc, 
-            r = pasi75_sim,
+            r = pasi75,
             trt_class = trtclass, 
             trt_ref = "PBO"),
     
@@ -456,6 +456,15 @@ FE_net_age_agd.sc4.2 <- func.mult(sub_agd1, "studyc",
                                     "JUNCTURE", "UNCOVER-3 SUB"), 
                                   "age")
 
+rlist::list.save(FE_net_org_df, 'D:\\MPH-Project\\FE_net_org_df.org.rdata')
+rlist::list.save(FE_net_age_agd.sc1.1, 'D:\\MPH-Project\\FE_net_age_agd.sc1.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc1.2, 'D:\\MPH-Project\\FE_net_age_agd.sc1.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc2.1, 'D:\\MPH-Project\\FE_net_age_agd.sc2.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc2.2, 'D:\\MPH-Project\\FE_net_age_agd.sc2.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc3.1, 'D:\\MPH-Project\\FE_net_age_agd.sc3.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc3.2, 'D:\\MPH-Project\\FE_net_age_agd.sc3.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc4.1, 'D:\\MPH-Project\\FE_net_age_agd.sc4.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc4.2, 'D:\\MPH-Project\\FE_net_age_agd.sc4.2.org.rdata')
 
 #####################################################################
 ##                        Original scenario                        ##
@@ -491,6 +500,16 @@ FE_net_age_agd.sc4.4 <- func.mult(sub_agd1, "studyc", c("UNCOVER-3"),
 #####################################################################
 ##                      Save the model result                      ##
 #####################################################################
+
+rlist::list.save(FE_net_org_df, 'D:\\MPH-Project\\FE_net_org_df.org.rdata')
+rlist::list.save(FE_net_age_agd.sc1.1, 'D:\\MPH-Project\\FE_net_age_agd.sc1.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc1.2, 'D:\\MPH-Project\\FE_net_age_agd.sc1.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc2.1, 'D:\\MPH-Project\\FE_net_age_agd.sc2.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc2.2, 'D:\\MPH-Project\\FE_net_age_agd.sc2.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc3.1, 'D:\\MPH-Project\\FE_net_age_agd.sc3.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc3.2, 'D:\\MPH-Project\\FE_net_age_agd.sc3.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc4.1, 'D:\\MPH-Project\\FE_net_age_agd.sc4.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc4.2, 'D:\\MPH-Project\\FE_net_age_agd.sc4.2.org.rdata')
 
 rlist::list.save(FE_net_org_df, 'D:\\MPH-Project\\FE_net_org_df.rdata')
 rlist::list.save(FE_net_age_agd.sc1.1, 'D:\\MPH-Project\\FE_net_age_agd.sc1.1.rdata')
