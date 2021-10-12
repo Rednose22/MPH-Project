@@ -16,9 +16,7 @@ linestretch: 1.5
 # Ixekizumab (依克珠单抗, EliLilly, IL blocker)
 
 ### 5 AGD
-1. In the "FIXTURE" trial, the Secukinu
-
-mab is more effective than Etanercept. (300 mg Secukinumab vs 150 mg Secukinumab vs Placebo vs 50mg etanercept)
+1. In the "FIXTURE" trial, the Secukinumab is more effective than Etanercept. (300 mg Secukinumab vs 150 mg Secukinumab vs Placebo vs 50mg etanercept)
 
 2. In the "ERASURE" trial, 300 mg Secukinumab vs 150 mg Secukinumab vs Placebo. 
 
@@ -89,19 +87,29 @@ temp1 <- lapply(temp, function (x) {
 ## get the file path
 temp.list <- map(temp, function(x) {paste0("D:\\MPH-Project\\", x)})
 
-FE_net_age_agd.sc1.1 <- list.load(temp.list[[1]])
-FE_net_age_agd.sc1.2 <- list.load(temp.list[[2]])
-FE_net_age_agd.sc2.1 <- list.load(temp.list[[3]])
-FE_net_age_agd.sc2.2 <- list.load(temp.list[[4]])
-FE_net_age_agd.sc3.1 <- list.load(temp.list[[5]])
-FE_net_age_agd.sc3.2 <- list.load(temp.list[[6]])
-FE_net_age_agd.sc4.1 <- list.load(temp.list[[7]])
-FE_net_age_agd.sc4.2 <- list.load(temp.list[[8]])
+FE_net_age_agd.sc1.1.org <- list.load(temp.list[[1]])
+FE_net_age_agd.sc1.2.org <- list.load(temp.list[[3]])
+FE_net_age_agd.sc2.1.org <- list.load(temp.list[[5]])
+FE_net_age_agd.sc2.2.org <- list.load(temp.list[[7]])
+FE_net_age_agd.sc3.1.org <- list.load(temp.list[[9]])
+FE_net_age_agd.sc3.2.org <- list.load(temp.list[[11]])
+FE_net_age_agd.sc4.1.org <- list.load(temp.list[[13]])
+FE_net_age_agd.sc4.2.org <- list.load(temp.list[[15]])
+FE_net_org_df.org <- list.load(temp.list[[19]])
 
-FE_net_age_agd.sc4.3 <- list.load(temp.list[[9]])
-FE_net_age_agd.sc4.4 <- list.load(temp.list[[10]])
+FE_net_age_agd.sc1.1 <- list.load(temp.list[[2]])
+FE_net_age_agd.sc1.2 <- list.load(temp.list[[4]])
+FE_net_age_agd.sc2.1 <- list.load(temp.list[[6]])
+FE_net_age_agd.sc2.2 <- list.load(temp.list[[8]])
+FE_net_age_agd.sc3.1 <- list.load(temp.list[[10]])
+FE_net_age_agd.sc3.2 <- list.load(temp.list[[12]])
+FE_net_age_agd.sc4.1 <- list.load(temp.list[[14]])
+FE_net_age_agd.sc4.2 <- list.load(temp.list[[16]])
 
-FE_net_org_df <- list.load(temp.list[[11]])
+FE_net_age_agd.sc4.3 <- list.load(temp.list[[17]])
+FE_net_age_agd.sc4.4 <- list.load(temp.list[[18]])
+
+FE_net_org_df <- list.load(temp.list[[20]])
 
 ```
 
