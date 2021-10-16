@@ -1,0 +1,949 @@
+---
+output: pdf_document
+header-includes:
+  \usepackage{fvextra}
+  \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+---
+
+## Appendix 8: R code of data preprocesss and modelling {-}
+
+```{r, echo=TRUE, eval=FALSE, tidy=TRUE, tidy.opts=list(width.cutoff=200), tidy='styler'}
+
+####################################################################
+
+##               PART 1   modelling process                       ##
+
+####################################################################
+
+
+#####################################################################
+##                        Program set up                           ##
+#####################################################################
+library(multinma)
+library(tidyverse)
+library(lazyeval)
+library(data.table)
+library(purrr)
+library(kableExtra)
+library(rlist) ## save the list as rdata
+library(stringr)
+library(qdapRegex)
+library(gridExtra)
+library(lemon)
+library(formatR)
+
+options(mc.cores = parallel::detectCores())
+
+nc <- switch(tolower(Sys.getenv("_R_CHECK_LIMIT_CORES_")), 
+             "true" =, "warn" = 2, 
+             parallel::detectCores())
+options(mc.cores = nc)
+
+setwd("D:\\MPH-Project")
+memory.limit(size=40000) # set memory
+
+#####################################################################
+##          Redistribute the outcome to increase                   ##
+##          treatment effects in younger population                ##  
+#####################################################################
+
+## checking the missing data
+full_ipd <- plaque_psoriasis_ipd %>%
+  mutate(   # Check complete cases for covariates of interest
+    complete = complete.cases(durnpso, prevsys, bsa, weight, psa, age, male))
+
+#
+s.comp <- sum(!full_ipd$complete)
+mean.comp <- mean(!full_ipd$complete)
+
+# remove the missing data
+full_ipd <- filter(full_ipd, complete)
+
+full_agd <- plaque_psoriasis_agd
+
+## initial count by studyc, age group, pasi75 group
+full.crs <- full_ipd %>%
+  mutate(sub_age = ifelse(age>=46, "gt or eq 46", "lt 46"),
+         cat_pas = ifelse(pasi75 == 1, "yes", "no")) %>%
+  count(studyc, trtc, cat_pas, sub_age)
+
+# histogram by studyc before redistribution
+ggplot(full.crs) +
+  geom_bar(aes(x=sub_age, y=n, fill = cat_pas), stat = "identity") +
+  facet_wrap(vars(studyc, trtc)) +
+  labs(title = "Distribution before simulation by trials, studies")+
+  guides(fill=guide_legend(title="PASI75")) +
+  xlab("Age group") +
+  ylab("Frequency")
+
+## nest data
+full_ipd.muta <- full_ipd %>%
+  group_by(studyc) %>%
+  nest()
+
+## create model and then predict the f(pasi75)
+set.seed(1234)
+
+full_ipd.muta$data <- map(full_ipd.muta$data, function(df){
+  a <- glm(pasi75 ~ age*trtc + bmi*trtc + male*trtc + bsa*trtc + weight*trtc + durnpso*trtc, family = "binomial", data = df, na.action = "na.exclude")
+  df %>%
+    mutate(lp = predict(a, type = "link"))
+})
+
+# Ensures reproducible
+full_ipd.muta$data <- map(full_ipd.muta$data, function(df){
+  df %>%
+    mutate(lp2 = if_else(age < 46 & trtc %in% c("PBO"),  lp - 0.2, lp),
+           lp2 = if_else(age < 46 & !trtc %in% c("PBO"), lp2 + 0.2, lp2),
+           risk = plogis(lp2),
+           ## Next line is stochastic
+           pasi75_sim = rbinom(n = length(lp2), size = 1, prob = risk))
+})
+
+full_ipd <- full_ipd.muta %>%
+  unnest(data) %>%
+  filter(!is.na(pasi75_sim))  ## 6 records with missing PASI75 deleted from data
+
+full.crs2 <- full_ipd %>%
+  mutate(cat_pas = ifelse(pasi75_sim == 1, "yes", "no"),
+         sub_age = ifelse(age>=46, "gt or eq 46", "lt 46")) %>%
+  count(studyc, trtc, cat_pas, sub_age)
+
+# histogram by studyc after redistribution
+ggplot(full.crs2) +
+  geom_bar(aes(x=sub_age, y=n, fill = cat_pas), stat = "identity") +
+  facet_wrap(vars(studyc, trtc)) +
+  labs(title = "Distribution after simulation by trials, studies") +
+  guides(fill=guide_legend(title="PASI75"))
+
+
+#####################################################################
+##                          Data preparation                       ##
+#####################################################################
+
+## Data transformation in IPD
+sub_ipd <- full_ipd %>% 
+  mutate(# Variable transformations
+    bsa = bsa / 100,
+    prevsys = as.numeric(prevsys),
+    psa = as.numeric(psa),
+    weight = weight / 10,
+    durnpso = durnpso / 10,
+    # Treatment classes
+    trtclass = case_when(trtn == 1 ~ "Placebo",
+                         trtn %in% c(2, 3, 5, 6, 7) ~ "IL blocker",
+                         trtn == 4 ~ "TNFa blocker"),
+    sub_age = ifelse(age>=46, "gt or eq 46", "lt 46"),
+    sub_sex = ifelse(male == "TRUE", "male", "female"),
+    male = ifelse(male == "TRUE", 1, 0))
+
+## subgroup result generated from IPD
+## five covariate durnpso, prevsys, bsa, weight, psa, (age/male)
+## include studyc, trt, trtclass, trtn, trtc_long into by vars
+
+sub_eff_func <- function(group_vars, name_) {
+  
+  sub_ipd %>% 
+    group_by(!!!group_vars) %>%
+    summarise(age_mean = mean(age),
+              age_sd = sd(age),
+              bmi_mean = mean(bmi, na.rm = TRUE),
+              bmi_sd = sd(bmi, na.rm = TRUE),
+              weight_mean = mean(bmi, na.rm = TRUE),
+              weight_sd = sd(bmi, na.rm = TRUE),
+              durnpso_mean = mean(durnpso),
+              durnpso_sd = sd(durnpso),
+              pasi75_n = n(),
+              pasi75_r = sum(pasi75),
+              pasi90_n = n(),
+              pasi90_r = sum(pasi90),
+              pasi100_n = n(),
+              pasi100_r = sum(pasi100), 
+              psa = mean(psa), 
+              prevsys = mean(prevsys), 
+              male = mean(male),
+              bsa_mean = mean(bsa), 
+              bsa_sd = sd(bsa)) %>%
+    mutate(studyc = paste(studyc, name_)) 
+  
+}
+
+## convert IPD to AgD
+ipd_agd <- sub_eff_func(quos(studyc, trtc, trtclass, trtn, trtc_long), "IPD")
+
+## aggregrate data age-specific subgroup
+agd_sub_age <- sub_eff_func(quos(studyc, trtc, trtclass, trtn, trtc_long, sub_age), "SUB")
+
+## aggregrate data sex-specific subgroup
+agd_sub_sex <- sub_eff_func(quos(studyc, trtc, trtclass, trtn, trtc_long, sub_sex), "SUB")
+
+## aggregrate data factorial combination of age and sex subgroup
+agd_sub_agesex <- sub_eff_func(quos(studyc, trtc, trtclass, trtn, trtc_long, sub_age, sub_sex), "SUB")
+
+
+## original AgD mutation
+sub_agd <- full_agd %>% 
+  mutate(
+    # Variable transformations
+    bsa_mean = bsa_mean / 100,
+    bsa_sd = bsa_sd / 100,
+    prevsys = prevsys / 100,
+    psa = psa / 100,
+    male = male / 100,
+    weight_mean = weight_mean / 10,
+    weight_sd = weight_sd / 10,
+    durnpso_mean = durnpso_mean / 10,
+    durnpso_sd = durnpso_sd / 10,
+    
+    # Treatment classes
+    trtclass = case_when(trtn == 1 ~ "Placebo",
+                         trtn %in% c(2, 3, 5, 6, 7) ~ "IL blocker",
+                         trtn == 4 ~ "TNFa blocker")
+  )
+
+
+
+## combine AGD with study level/treatment level subgroup
+sub_agd1 <- bind_rows(sub_agd,
+                      agd_sub_age, 
+                      ipd_agd)
+
+
+#####################################################################
+##        Generate a self-defined function to run the model        ##
+##        under different scenarios preparation                    ##
+#####################################################################
+
+#####################################################################
+##             specification of function
+##
+## define a function to run the multiple ML-NMRs
+## return a list contains nmr model
+## agd.dt: the AgD
+## col_name: default value is studyc, which helps to select 
+## corresponding IPD and AgD
+## value1: filter criteria in IPD
+## value2: filter criteria in AgD
+#####################################################################
+
+func.mult <- function(agd.dt, col_name, value1, value2, sub_var) {
+  
+  filter_criteria1 <- interp(~y %in% x, .values=list(y = as.name(col_name), x = value1))
+  
+  filter_criteria2 <- interp(~y %in% x, .values=list(y = as.name(col_name), x = value2))
+  
+  net_org <- combine_network(
+    set_ipd(sub_ipd %>% filter_(filter_criteria1),
+            # set_ipd(sub_ipd,
+            study = studyc, 
+            trt = trtc, 
+            r = pasi75,
+            trt_class = trtclass, 
+            trt_ref = "PBO"),
+    
+    set_agd_arm(agd.dt %>% filter_(filter_criteria2), 
+                study = studyc, 
+                trt = trtc, 
+                r = pasi75_r, 
+                n = pasi75_n,
+                trt_class = trtclass,
+                trt_ref = "PBO")
+  )
+  
+  # net_org
+  # 
+  netplot <- plot(net_org, weight_nodes = T, weight_edges = T, show_trt_class = T) +
+    ggplot2::theme(legend.position = "bottom", legend.box = "vertical")
+  
+  
+  ## Add integration points of to the AgD studies in the network
+  if (sub_var == "age") {
+    net_org <- add_integration(net_org,
+                               durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
+                               prevsys = distr(qbern, prob = prevsys),
+                               bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
+                               weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
+                               psa = distr(qbern, prob = psa),
+                               age = distr(qgamma, mean = age_mean, sd = age_sd),
+                               n_int = 1000)
+    ## fixed effect NL-NMR
+    FE_net_org <- nma(net_org, 
+                      trt_effects = "fixed",
+                      link = "probit", 
+                      likelihood = "bernoulli2",
+                      regression = ~(durnpso + prevsys + bsa + weight + psa + age)*.trt,
+                      class_interactions = "common",
+                      prior_intercept = normal(scale = 10),
+                      prior_trt = normal(scale = 10),
+                      prior_reg = normal(scale = 10),
+                      init_r = 0.1,
+                      QR = TRUE)
+  }
+  else if (sub_var == "male") {
+    net_org <- add_integration(net_org,
+                               durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
+                               prevsys = distr(qbern, prob = prevsys),
+                               bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
+                               weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
+                               psa = distr(qbern, prob = psa),
+                               male = distr(qbern, prob = male),
+                               n_int = 1000)
+    FE_net_org <- nma(net_org, 
+                      trt_effects = "fixed",
+                      link = "probit", 
+                      likelihood = "bernoulli2",
+                      regression = ~(durnpso + prevsys + bsa + weight + psa + age)*.trt,
+                      class_interactions = "common",
+                      prior_intercept = normal(scale = 10),
+                      prior_trt = normal(scale = 10),
+                      prior_reg = normal(scale = 10),
+                      init_r = 0.1,
+                      QR = TRUE)
+    
+  } 
+  
+  else if (sub_var == "male+age") {
+    net_org <- add_integration(net_org,
+                               durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
+                               prevsys = distr(qbern, prob = prevsys),
+                               bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
+                               weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
+                               psa = distr(qbern, prob = psa),
+                               male = distr(qbern, prob = male),
+                               age = distr(qgamma, mean = age_mean, sd = age_sd),
+                               n_int = 1000)
+    
+    FE_net_org <- nma(net_org, 
+                      trt_effects = "fixed",
+                      link = "probit", 
+                      likelihood = "",
+                      regression = ~(durnpso + prevsys + bsa + weight + psa + age + male)*.trt,
+                      class_interactions = "common",
+                      prior_intercept = normal(scale = 10),
+                      prior_trt = normal(scale = 10),
+                      prior_reg = normal(scale = 10),
+                      init_r = 0.1,
+                      QR = TRUE)
+    
+  }
+  else {
+    net_org <- add_integration(net_org,
+                               durnpso = distr(qgamma, mean = durnpso_mean, sd = durnpso_sd),
+                               prevsys = distr(qbern, prob = prevsys),
+                               bsa = distr(qlogitnorm, mean = bsa_mean, sd = bsa_sd),
+                               weight = distr(qgamma, mean = weight_mean, sd = weight_sd),
+                               psa = distr(qbern, prob = psa),
+                               n_int = 1000)
+    
+    FE_net_org <- nma(net_org, 
+                      trt_effects = "fixed",
+                      link = "probit", 
+                      likelihood = "bernoulli2",
+                      regression = ~(durnpso + prevsys + bsa + weight + psa)*.trt,
+                      class_interactions = "common",
+                      prior_intercept = normal(scale = 10),
+                      prior_trt = normal(scale = 10),
+                      prior_reg = normal(scale = 10),
+                      init_r = 0.1,
+                      QR = TRUE)
+  }
+  
+  return(FE_net_org)
+  
+}
+
+#####################################################################
+##                        Original scenario                        ##
+##                                  vs                             ##
+##                        No sub-groups scenario                   ##
+##                                  vs                             ##
+##                        Sub-groups scenario                      ##
+#####################################################################
+
+#####################################################################
+##                        Original IPD+AGD                         ##
+#####################################################################
+
+## 4 IPD + 5 AgD
+FE_net_org_df <- func.mult(sub_agd, "studyc", 
+                           c("IXORA", "UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), 
+                           c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", 
+                             "JUNCTURE"), 
+                           "age")
+
+#####################################################################
+##                  No sub-groups scenario                         ##
+#####################################################################
+
+#####################################################################
+##                        selected IPD is IXORA                    ##
+#####################################################################
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_age_agd.sc1.1 <- func.mult(sub_agd1, "studyc", 
+                                  c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), 
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", 
+                                    "JUNCTURE", "IXORA IPD"), 
+                                  "age")
+
+#####################################################################
+##                        selected IPD is UNCOVER-1                ##
+#####################################################################
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_age_agd.sc2.1 <- func.mult(sub_agd1, "studyc", 
+                                  c("IXORA", "UNCOVER-2", "UNCOVER-3"), 
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", 
+                                    "JUNCTURE", "UNCOVER-1 IPD"), 
+                                  "age")
+
+#####################################################################
+##                        selected IPD is UNCOVER-2                ##
+#####################################################################
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_age_agd.sc3.1 <- func.mult(sub_agd1, "studyc", 
+                                  c("IXORA", "UNCOVER-1", "UNCOVER-3"), 
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", 
+                                    "JUNCTURE", "UNCOVER-2 IPD"), 
+                                  "age")
+
+#####################################################################
+##                        selected IPD is UNCOVER-3                ##
+#####################################################################
+
+## 3 IPD + 1 IPD aggregated + 5 AgD
+FE_net_age_agd.sc4.1 <- func.mult(sub_agd1, "studyc", 
+                                  c("IXORA", "UNCOVER-1", "UNCOVER-2"), 
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", 
+                                    "JUNCTURE", "UNCOVER-3 IPD"), 
+                                  "age")
+
+#####################################################################
+##                  Sub-groups scenario                            ##
+#####################################################################
+
+#####################################################################
+##                        selected IPD is IXORA                    ##
+#####################################################################
+
+## 3 IPD + 1 IPD subgrouped + 5 AgD
+FE_net_age_agd.sc1.2 <- func.mult(sub_agd1, "studyc", 
+                                  c("UNCOVER-1", "UNCOVER-2", "UNCOVER-3"), 
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", "JUNCTURE", "IXORA SUB"), "age")
+
+#####################################################################
+##                        selected IPD is UNCOVER-1                ##
+#####################################################################
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_age_agd.sc2.2 <- func.mult(sub_agd1, "studyc", 
+                                  c("IXORA", "UNCOVER-2", "UNCOVER-3"), 
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", 
+                                    "JUNCTURE", "UNCOVER-1 SUB"), 
+                                  "age")
+
+#####################################################################
+##                        selected IPD is UNCOVER-2                ##
+#####################################################################
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_age_agd.sc3.2 <- func.mult(sub_agd1, "studyc", 
+                                  c("IXORA", "UNCOVER-1", "UNCOVER-3"), 
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", 
+                                    "JUNCTURE", "UNCOVER-2 SUB"), 
+                                  "age")
+
+#####################################################################
+##                        selected IPD is UNCOVER-3                ##
+#####################################################################
+
+## 3 IPD + 1 IPD subgroup + 5 AgD
+FE_net_age_agd.sc4.2 <- func.mult(sub_agd1, "studyc", 
+                                  c("IXORA", "UNCOVER-1", "UNCOVER-2"), 
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", 
+                                    "JUNCTURE", "UNCOVER-3 SUB"), 
+                                  "age")
+
+rlist::list.save(FE_net_org_df, 'D:\\MPH-Project\\FE_net_org_df.org.rdata')
+rlist::list.save(FE_net_age_agd.sc1.1, 'D:\\MPH-Project\\FE_net_age_agd.sc1.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc1.2, 'D:\\MPH-Project\\FE_net_age_agd.sc1.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc2.1, 'D:\\MPH-Project\\FE_net_age_agd.sc2.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc2.2, 'D:\\MPH-Project\\FE_net_age_agd.sc2.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc3.1, 'D:\\MPH-Project\\FE_net_age_agd.sc3.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc3.2, 'D:\\MPH-Project\\FE_net_age_agd.sc3.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc4.1, 'D:\\MPH-Project\\FE_net_age_agd.sc4.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc4.2, 'D:\\MPH-Project\\FE_net_age_agd.sc4.2.org.rdata')
+
+#####################################################################
+##                        Original scenario                        ##
+##                                  vs                             ##
+##                        No sub-groups scenario                   ##
+##                                  vs                             ##
+##                        Sub-groups scenario                      ##
+#####################################################################
+
+#####################################################################
+##       No sub-groups scenario: selected IPD is UNCOVER-3         ##
+#####################################################################
+
+## 1 IPD + 3 IPD aggregated + 5 AgD
+FE_net_age_agd.sc4.3 <- func.mult(sub_agd1, "studyc", 
+                                  c("UNCOVER-3"), 
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", 
+                                    "JUNCTURE", "IXORA IPD", "UNCOVER-1 IPD",
+                                    "UNCOVER-2 IPD"), 
+                                  "age")
+
+#####################################################################
+##          Sub-groups scenario: selected IPD is UNCOVER-3         ##
+#####################################################################
+
+## 1 IPD + 3 subgrouped IPD + 5 AgD
+FE_net_age_agd.sc4.4 <- func.mult(sub_agd1, "studyc", c("UNCOVER-3"), 
+                                  c("FIXTURE", "ERASURE", "CLEAR", "FEATURE", 
+                                    "JUNCTURE", "IXORA SUB", "UNCOVER-1 SUB", 
+                                    "UNCOVER-2 SUB"), 
+                                  "age")
+
+#####################################################################
+##                      Save the model result                      ##
+#####################################################################
+
+rlist::list.save(FE_net_org_df, 'D:\\MPH-Project\\FE_net_org_df.org.rdata')
+rlist::list.save(FE_net_age_agd.sc1.1, 'D:\\MPH-Project\\FE_net_age_agd.sc1.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc1.2, 'D:\\MPH-Project\\FE_net_age_agd.sc1.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc2.1, 'D:\\MPH-Project\\FE_net_age_agd.sc2.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc2.2, 'D:\\MPH-Project\\FE_net_age_agd.sc2.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc3.1, 'D:\\MPH-Project\\FE_net_age_agd.sc3.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc3.2, 'D:\\MPH-Project\\FE_net_age_agd.sc3.2.org.rdata')
+rlist::list.save(FE_net_age_agd.sc4.1, 'D:\\MPH-Project\\FE_net_age_agd.sc4.1.org.rdata')
+rlist::list.save(FE_net_age_agd.sc4.2, 'D:\\MPH-Project\\FE_net_age_agd.sc4.2.org.rdata')
+
+rlist::list.save(FE_net_org_df, 'D:\\MPH-Project\\FE_net_org_df.rdata')
+rlist::list.save(FE_net_age_agd.sc1.1, 'D:\\MPH-Project\\FE_net_age_agd.sc1.1.rdata')
+rlist::list.save(FE_net_age_agd.sc1.2, 'D:\\MPH-Project\\FE_net_age_agd.sc1.2.rdata')
+rlist::list.save(FE_net_age_agd.sc2.1, 'D:\\MPH-Project\\FE_net_age_agd.sc2.1.rdata')
+rlist::list.save(FE_net_age_agd.sc2.2, 'D:\\MPH-Project\\FE_net_age_agd.sc2.2.rdata')
+rlist::list.save(FE_net_age_agd.sc3.1, 'D:\\MPH-Project\\FE_net_age_agd.sc3.1.rdata')
+rlist::list.save(FE_net_age_agd.sc3.2, 'D:\\MPH-Project\\FE_net_age_agd.sc3.2.rdata')
+rlist::list.save(FE_net_age_agd.sc4.1, 'D:\\MPH-Project\\FE_net_age_agd.sc4.1.rdata')
+rlist::list.save(FE_net_age_agd.sc4.2, 'D:\\MPH-Project\\FE_net_age_agd.sc4.2.rdata')
+rlist::list.save(FE_net_age_agd.sc4.3, 'D:\\MPH-Project\\FE_net_age_agd.sc4.3.rdata')
+rlist::list.save(FE_net_age_agd.sc4.4, 'D:\\MPH-Project\\FE_net_age_agd.sc4.4.rdata')
+
+## Import the saved model result
+start_time <- Sys.time()
+Sys.sleep(5)
+
+# extract the name of model result from folder
+temp <- list.files(path='D:\\MPH-Project\\', pattern="*.rdata")
+
+## remove the suffix ".rdata"
+temp1 <- lapply(temp, function (x) {
+  sub(pattern = "(.*)\\..*$", replacement = "\\1", basename(x))
+}) %>%
+  as.character()
+
+## get the file path
+temp.list <- map(temp, function(x) {paste0("D:\\MPH-Project\\", x)})
+
+FE_net_age_agd.sc1.1.org <- list.load(temp.list[[1]])
+FE_net_age_agd.sc1.2.org <- list.load(temp.list[[3]])
+FE_net_age_agd.sc2.1.org <- list.load(temp.list[[5]])
+FE_net_age_agd.sc2.2.org <- list.load(temp.list[[7]])
+FE_net_age_agd.sc3.1.org <- list.load(temp.list[[9]])
+FE_net_age_agd.sc3.2.org <- list.load(temp.list[[11]])
+FE_net_age_agd.sc4.1.org <- list.load(temp.list[[13]])
+FE_net_age_agd.sc4.2.org <- list.load(temp.list[[15]])
+FE_net_org_df.org <- list.load(temp.list[[19]])
+
+FE_net_age_agd.sc1.1 <- list.load(temp.list[[2]])
+FE_net_age_agd.sc1.2 <- list.load(temp.list[[4]])
+FE_net_age_agd.sc2.1 <- list.load(temp.list[[6]])
+FE_net_age_agd.sc2.2 <- list.load(temp.list[[8]])
+FE_net_age_agd.sc3.1 <- list.load(temp.list[[10]])
+FE_net_age_agd.sc3.2 <- list.load(temp.list[[12]])
+FE_net_age_agd.sc4.1 <- list.load(temp.list[[14]])
+FE_net_age_agd.sc4.2 <- list.load(temp.list[[16]])
+
+FE_net_age_agd.sc4.3 <- list.load(temp.list[[17]])
+FE_net_age_agd.sc4.4 <- list.load(temp.list[[18]])
+
+FE_net_org_df <- list.load(temp.list[[20]])
+
+####################################################################
+
+##           PART 2   data summary and visualization              ##
+
+####################################################################
+
+# Get mean and sd of covariates in each study
+ipd_summary <- sub_ipd %>% 
+  group_by(studyc) %>% 
+  summarise_at(vars(weight, durnpso, bsa, age), list(mean = mean, sd = sd, min = min, max = max)) %>% 
+  pivot_longer(weight_mean:age_max, names_sep = "_", names_to = c("covariate", ".value")) %>% 
+  # Assign distributions
+  mutate(dist = recode(covariate,
+                       bsa = "dlogitnorm",
+                       durnpso = "dgamma",
+                       weight = "dgamma",
+                       age = "dgamma")) %>% 
+  # Compute density curves
+  group_by(studyc, covariate) %>% 
+  mutate(value = if_else(dist == "dlogitnorm",
+                         list(seq(0, 1, length.out = 101)),
+                         list(seq(min*0.8, max*1.2, length.out = 101)))) %>% 
+  unnest(cols = value) %>% 
+  mutate(dens = eval(call(first(dist), x = value, mean = first(mean), sd = first(sd))))
+
+# Plot histograms and assumed densities
+sub_ipd %>% 
+  pivot_longer(c(weight, durnpso, bsa, age), names_to = "covariate", values_to = "value") %>% 
+  ggplot(aes(x = value)) +
+  geom_histogram(aes(y = stat(density)), 
+                 binwidth = function(x) diff(range(x)) /nclass.Sturges(x),
+                 boundary = 0,
+                 fill = "grey50") +
+  geom_line(aes(y = dens), data = ipd_summary,
+            colour = "darkred", size = 0.5) +
+  facet_wrap(~studyc + covariate, scales = "free", ncol = 3) +
+  theme_multinma()
+
+
+## Original scenario vs no sub-groups scenario vs sub-groups scenario
+## Model comparison under different scenarios
+
+## combine coefficients of model in one list
+re.list <- list(FE_net_org_df, FE_net_age_agd.sc1.1, FE_net_age_agd.sc1.2, FE_net_age_agd.sc2.1, FE_net_age_agd.sc2.2, FE_net_age_agd.sc3.1, FE_net_age_agd.sc3.2, FE_net_age_agd.sc4.1, FE_net_age_agd.sc4.2)
+
+extrac.list <- function (list.new) {
+  listof.coeff <- list()
+  listof.dic <- list()
+  listof.resd <- list()
+  listof.pd <- list()
+  listof.releff <- list()
+  
+  
+  for (i in 1:length(list.new)) {
+    
+    ## coefficient
+    dt.out <- summary(list.new[[i]], "d", "beta", "mu") %>%
+      as_tibble() %>% 
+      select(parameter, mean, sd, `2.5%`, `97.5%`) %>%
+      # mutate_if(is.numeric, round, digits = 2) %>%
+      rename(lower = `2.5%`, upper = `97.5%`) %>%
+      mutate(id = i)
+    
+    ## model fit
+    mf.out <- dic(list.new[[i]])
+    
+    dic <- mf.out[["dic"]]
+    pd <-  mf.out[["pd"]]
+    resd <-  mf.out[["resdev"]]
+    ## relative treatment
+    # rt_fig <- as.data.frame(relative_effects(list.new[[i]]))
+    rt_fig <- relative_effects(list.new[[i]])[["summary"]]
+    
+    listof.coeff[[i]] <- dt.out
+    listof.dic[[i]] <- dic
+    listof.pd[[i]] <- pd
+    listof.resd[[i]] <- resd
+    listof.releff[[i]] <- rt_fig
+    
+  }
+  
+  comb.list <- list(listof.coeff, listof.dic, listof.pd, listof.resd, listof.releff)
+  return(comb.list)
+}
+
+comb.list.age <- extrac.list(re.list)
+
+
+### Tables of model results
+
+## set the coefficients together
+coeff.mod1.f <- do.call("bind_rows", comb.list.age[[1]]) %>%
+  mutate(scenario = case_when(id %in% 1 ~ "ipd + agd", 
+                              id %in% c(2,4,6,8) ~ "ipd + agg ipd + agd",
+                              id %in% c(3,5,7,9) ~ "ipd + sub ipd + agd")) %>%
+  group_by(parameter, scenario) %>%
+  summarise_at(c("mean", "lower", "upper"), mean) %>%
+  mutate_if(is.numeric, round, digits = 3) %>%
+  mutate("Mean (95% CI)" = paste0(mean, " (", lower, ", ", upper, ")"))
+
+## set the coefficients together for tables
+coeff.mod1.t <- coeff.mod1.f %>%
+  mutate("Mean (95% CI)" = paste0(mean, " (", lower, ", ", upper, ")")) %>%
+  pivot_wider(id_cols = parameter, names_from = scenario, names_sep = " ", values_from = c(`Mean (95% CI)`)) %>%
+  filter(!is.na(`ipd + agd`))
+
+#####################################################################
+##     Overall Model information under different scenarios         ##
+#####################################################################
+
+kbl(coeff.mod1.t %>% filter(grepl('mu', parameter)) %>% mutate(parameter = substring(parameter, 4, nchar(parameter)-1)), booktabs = T, align = "c",
+    caption = "The comparisons of intercept between different scenarios", 
+    col.names = c("Intercepts", "4 IPD + 5 AgD", "3 IPD + 1 aggregated IPD + 5 AgD", 
+                  "3 IPD + 1 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T)
+
+## coefficients of model
+kbl(coeff.mod1.t %>% filter(grepl('beta', parameter)) %>% mutate(parameter = substring(parameter, 6, nchar(parameter)-1)), booktabs = T, align = "c",
+    caption = "The comparisons between different scenarios", 
+    col.names = c("Coefficients", "4 IPD + 5 AgD", "3 IPD + 1 aggregated IPD + 5 AgD", 
+                  "3 IPD + 1 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T)
+
+## treatment difference compared to Placebo
+kbl(coeff.mod1.t %>% filter(grepl('^d', parameter)) %>% mutate(parameter = substring(parameter, 3, nchar(parameter)-1)), booktabs = T, align = "c",
+    caption = "The comparisons of treatment effects between different scenarios", 
+    col.names = c("treatment effects", "4 IPD + 5 AgD", "3 IPD + 1 aggregated IPD + 5 AgD", 
+                  "3 IPD + 1 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T)
+
+
+## Forest plot of model results
+## forest plot to combine results of different scenarios
+coeff.mod.f <- coeff.mod1.f  %>%
+  mutate(parameter = ifelse(grepl('mu', parameter), 
+                            substring(parameter, 4, nchar(parameter)-1), 
+                            ifelse(grepl('beta', parameter), 
+                                   substring(parameter, 6, nchar(parameter)-1), 
+                                   substring(parameter, 3, nchar(parameter)-1)))) %>%
+  arrange(parameter, scenario)
+
+coe.forest.fig <- function(filter_1, x1, y1, x2, ypot, dt=coeff.mod.f, rfl=0) {
+  ggplot(dt %>% filter(grepl(filter_1, parameter)), aes(x = mean, y = parameter, color = factor(scenario))) +
+    geom_point(position = position_dodge(width = ypot)) +
+    geom_errorbarh(aes(xmax = upper, xmin = lower), height=.1, position = position_dodge(width = ypot)) +
+    geom_vline(xintercept=rfl, color="black", linetype="dashed", alpha=.5) +
+    geom_text(aes(x = x2, label = `Mean (95% CI)`), position = position_dodge(width = ypot)) +
+    scale_x_continuous(limits = c(x1, y1)) +
+    ylab(" ") +
+    theme(legend.title = element_blank())
+}
+
+## age and interaction
+p1 <- coe.forest.fig("age", -0.55, 0.2, -0.4, 0.4)
+
+## weight and interaction
+p2 <- coe.forest.fig("weight", -0.7, 0.2, -0.5, 0.4)
+
+## psa and interaction
+p3 <- coe.forest.fig("psa", -2, 1, -1.5, 0.4)
+
+## prevsys and interaction
+p4 <- coe.forest.fig("prevsys", -1.9, 1, -1.4, 0.4)
+
+## durnpso and interaction
+p5 <- coe.forest.fig("durnpso", -0.6, 0.3, -0.4, 0.4)
+
+## bsa and interaction
+p6 <- coe.forest.fig("bsa", -8, 4, -6, 0.4)
+
+grid_arrange_shared_legend(p1, p2, p3, p4, p5, p6, ncol=2, nrow=3, position='bottom', top = grid::textGrob('Forest plot of model coefficients'))
+
+
+coe.forest.fig("^d", -2, 5, -1, 0.4, coeff.mod1.f, 1) +
+  labs(title = "Forest plot of treatment effects compared to placebo\nunder different scenarios") +
+  xlab(" ")
+
+## Relative effects under different scenarios
+
+reff.list <- list(comb.list.age[[5]][[1]], comb.list.age[[5]][[2]], comb.list.age[[5]][[3]],
+                  comb.list.age[[5]][[4]], comb.list.age[[5]][[5]],
+                  comb.list.age[[5]][[6]], comb.list.age[[5]][[7]],
+                  comb.list.age[[5]][[8]], comb.list.age[[5]][[9]])
+
+# draw the figures of relative effects
+releff.dt <- rbindlist(reff.list, idcol="id") %>%
+  mutate(scenario = case_when(id %in% 1 ~ "ipd + agd", 
+                              id %in% c(2,4,6,8) ~ "ipd + agg ipd + agd",
+                              id %in% c(3,5,7,9) ~ "ipd + sub ipd + agd")) %>%
+  # , par = trimws(word(word(parameter, 2, sep=":"), 1, sep="]"))) 
+  group_by(parameter, scenario) %>%
+  summarise_at(c("mean", "2.5%", "97.5%"), mean) %>%
+  mutate_if(is.numeric, round, digits = 3) %>%
+  mutate("Mean (95% CI)" = paste0(mean, " (", `2.5%`, ", ", `97.5%`, ")")) %>%
+  pivot_wider(id_cols = parameter, names_from = scenario, names_sep = " ", values_from = c(`Mean (95% CI)`)) %>%
+  filter(!is.na(`ipd + agd`))
+
+# mutate(parameter = substring(parameter, 3, nchar(parameter)-1))
+
+releff.dt$r.numb <- seq.int(nrow(releff.dt))
+
+## generate long table
+kbl(releff.dt %>% filter(r.numb < 37) %>% select(-r.numb), booktabs = T, align = "c",
+    caption = "The comparisons of relative treatment effects between different scenarios", 
+    col.names = c("Relative Effects", "4 IPD + 5 AgD", "3 IPD + 1 aggregated IPD + 5 AgD", 
+                  "3 IPD + 1 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T)
+
+kbl(releff.dt %>% filter(r.numb >= 37) %>% select(-r.numb), booktabs = T, align = "c",
+    caption = "The comparisons of relative treatment effects between different scenarios (continued)",
+    col.names = c("Relative Effects", "4 IPD + 5 AgD", "3 IPD + 1 aggregated IPD + 5 AgD",
+                  "3 IPD + 1 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position", "repeat_header"), full_width = T)
+
+
+## Original scenario vs 1 IPD + 3 agg IPD + 5 agd vs 1 IPD + 3 sub IPD + 5 agd
+
+## combine coefficients of model in one list
+re.list.2 <- list(FE_net_org_df, FE_net_age_agd.sc4.3, FE_net_age_agd.sc4.4)
+
+extrac.list <- function (list.new) {
+  listof.coeff <- list()
+  listof.dic <- list()
+  listof.resd <- list()
+  listof.pd <- list()
+  listof.releff <- list()
+  
+  
+  for (i in 1:length(list.new)) {
+    
+    ## coefficient
+    dt.out <- summary(list.new[[i]], pars= c("d", "beta", "mu")) %>%
+      as_tibble() %>% 
+      select(parameter, mean, sd, `2.5%`, `97.5%`) %>%
+      # mutate_if(is.numeric, round, digits = 2) %>%
+      rename(lower = `2.5%`, upper = `97.5%`) %>%
+      mutate(id = i)
+    
+    ## model fit
+    mf.out <- dic(list.new[[i]])
+    
+    dic <- mf.out[["dic"]]
+    pd <-  mf.out[["pd"]]
+    resd <-  mf.out[["resdev"]]
+    ## relative treatment
+    # rt_fig <- as.data.frame(relative_effects(list.new[[i]]))
+    rt_fig <- relative_effects(list.new[[i]])[["summary"]]
+    
+    listof.coeff[[i]] <- dt.out
+    listof.dic[[i]] <- dic
+    listof.pd[[i]] <- pd
+    listof.resd[[i]] <- resd
+    listof.releff[[i]] <- rt_fig
+    
+  }
+  
+  comb.list <- list(listof.coeff, listof.dic, listof.pd, listof.resd, listof.releff)
+  return(comb.list)
+}
+
+comb.list.age.2 <- extrac.list(re.list.2)
+
+
+### Tables of model results
+
+## set the coefficients together
+coeff.mod1.f.2 <- do.call("bind_rows", comb.list.age.2[[1]]) %>%
+  mutate(scenario = case_when(id %in% 1 ~ "ipd + agd", 
+                              id %in% c(2) ~ "ipd + agg ipd + agd",
+                              id %in% c(3) ~ "ipd + sub ipd + agd")) %>%
+  mutate_if(is.numeric, round, digits = 3) %>%
+  mutate("Mean (95% CI)" = paste0(mean, "(", lower, ", ", upper, ")"))
+
+## set the coefficients together for tables
+coeff.mod1.t.2 <- coeff.mod1.f.2 %>%
+  mutate("Mean (95% CI)" = paste0(mean, "(", lower, ", ", upper, ")")) %>%
+  pivot_wider(id_cols = parameter, names_from = scenario, names_sep = "_", values_from = c(`Mean (95% CI)`)) %>%
+  filter(!is.na(`ipd + agd`) & !is.na(`ipd + agg ipd + agd`) & !is.na(`ipd + sub ipd + agd`))
+
+#####################################################################
+##     Overall Model information under different scenarios         ##
+#####################################################################
+
+kbl(coeff.mod1.t.2 %>% filter(grepl('mu', parameter)) %>% mutate(parameter = substring(parameter, 4, nchar(parameter)-1)), booktabs = T, align = "c",
+    caption = "The comparisons of intercept between different scenarios", 
+    col.names = c("Intercepts", "4 IPD + 5 AgD", "1 IPD + 3 aggregated IPD + 5 AgD", 
+                  "1 IPD + 3 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T)
+
+## coefficients of model
+kbl(coeff.mod1.t.2 %>% filter(grepl('beta', parameter)) %>% mutate(parameter = substring(parameter, 6, nchar(parameter)-1)), booktabs = T, align = "c",
+    caption = "The comparisons between different scenarios", 
+    col.names = c("Coefficients", "4 IPD + 5 AgD", "1 IPD + 3 aggregated IPD + 5 AgD", 
+                  "1 IPD + 3 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T)
+
+## treatment difference compared to Placebo
+kbl(coeff.mod1.t.2 %>% filter(grepl('^d', parameter)) %>% mutate(parameter = substring(parameter, 3, nchar(parameter)-1)), booktabs = T, align = "c",
+    caption = "The comparisons of treatment effects between different scenarios", 
+    col.names = c("treatment effects", "4 IPD + 5 AgD", "1 IPD + 3 aggregated IPD + 5 AgD", 
+                  "1 IPD + 3 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T)
+
+
+coe.forest.fig("^d", -2, 5, -1, 0.4, coeff.mod1.f.2, 1) +
+  labs(title = "Forest plot of treatment effects compared to placebo\nunder different scenarios") +
+  xlab(" ")
+
+
+
+## Forest plot of model results
+## forest plot to combine results of different scenarios
+coeff.mod.f.2 <- coeff.mod1.f.2  %>%
+  mutate(parameter = ifelse(grepl('mu', parameter), 
+                            substring(parameter, 4, nchar(parameter)-1), 
+                            ifelse(grepl('beta', parameter), 
+                                   substring(parameter, 6, nchar(parameter)-1), 
+                                   substring(parameter, 3, nchar(parameter)-1)))) %>%
+  arrange(parameter, scenario)
+
+## age and interaction
+p1 <- coe.forest.fig("age", -0.55, 0.2, -0.4, 0.4, coeff.mod.f.2)
+
+## weight and interaction
+p2 <- coe.forest.fig("weight", -0.7, 0.2, -0.5, 0.4, coeff.mod.f.2)
+
+## psa and interaction
+p3 <- coe.forest.fig("psa", -3, 1.5, -2, 0.4, coeff.mod.f.2)
+
+## prevsys and interaction
+p4 <- coe.forest.fig("prevsys", -3, 1, -2, 0.4, coeff.mod.f.2)
+
+## durnpso and interaction
+p5 <- coe.forest.fig("durnpso", -0.8, 0.5, -0.6, 0.4, coeff.mod.f.2)
+
+## bsa and interaction
+p6 <- coe.forest.fig("bsa", -11, 7, -9, 0.4, coeff.mod.f.2)
+
+
+grid_arrange_shared_legend(p1, p2, p3, p4, p5, p6, ncol=2, nrow=3, position='bottom', top = grid::textGrob('Forest plot of model coefficients'))
+
+
+## Relative effects under different scenarios
+
+
+reff.list.2 <- list(comb.list.age.2[[5]][[1]], comb.list.age.2[[5]][[2]], comb.list.age.2[[5]][[3]])
+
+# draw the figures of relative effects
+releff.dt.2 <- rbindlist(reff.list.2, idcol="id") %>%
+  mutate(scenario = case_when(id %in% 1 ~ "ipd + agd", 
+                              id %in% c(2) ~ "ipd + agg ipd + agd",
+                              id %in% c(3) ~ "ipd + sub ipd + agd")) %>%
+  # ,par = trimws(word(word(parameter, 2, sep=":"), 1, sep="]"))) 
+  mutate_if(is.numeric, round, digits = 3) %>%
+  mutate("Mean (95% CI)" = paste0(mean, " (", `2.5%`, ", ", `97.5%`, ")")) %>%
+  pivot_wider(id_cols = parameter, names_from = scenario, names_sep = " ", values_from = c(`Mean (95% CI)`)) %>%
+  filter(!is.na(`ipd + agd`))
+# mutate(parameter = substring(parameter, 3, nchar(parameter)-1))
+
+releff.dt.2$r.numb <- seq.int(nrow(releff.dt.2))
+
+## generate long table
+kbl(releff.dt.2 %>% filter(r.numb < 37) %>% select(-r.numb), booktabs = T, align = "c",
+    caption = "The comparisons of relative treatment effects between different scenarios", 
+    col.names = c("Relative Effects", "4 IPD + 5 AgD", "3 IPD + 1 aggregated IPD + 5 AgD", 
+                  "3 IPD + 1 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"), full_width = T)
+
+kbl(releff.dt.2 %>% filter(r.numb >= 37) %>% select(-r.numb), booktabs = T, align = "c",
+    caption = "The comparisons of relative treatment effects between different scenarios (continued)",
+    col.names = c("Relative Effects", "4 IPD + 5 AgD", "3 IPD + 1 aggregated IPD + 5 AgD",
+                  "3 IPD + 1 sub-grouped IPD + 5 AgD")) %>%
+  kable_styling(latex_options = c("striped", "HOLD_position", "repeat_header"), full_width = T)
+
+```
